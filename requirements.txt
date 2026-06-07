@@ -1,0 +1,6 @@
+aiogram>=3.0
+aiosqlite
+pyrogram
+tgcrypto
+python-dotenv
+pymorphy3
