@@ -18,7 +18,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 
 import config
-from database.db import init_db
+from database.db import init_db, close_db
 from handlers.messages import router as messages_router
 from handlers.admin import router as admin_router
 
@@ -34,7 +34,11 @@ async def main() -> None:
     dp.include_router(messages_router)
     dp.include_router(admin_router)
 
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        # Корректно закрыть соединение с БД при остановке (раздел 8 ТЗ)
+        await close_db()
 
 
 if __name__ == "__main__":
