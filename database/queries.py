@@ -114,15 +114,35 @@ async def increment_message_count(
     await conn.commit()
 
 
-async def increment_ad_attempts(conn: aiosqlite.Connection, user_id: int) -> None:
-    """Атомарно инкрементировать счётчик нарушений ad_attempts.
+async def increment_ad_attempts(
+    conn: aiosqlite.Connection,
+    user_id: int,
+    username: str | None = None,
+) -> None:
+    """Атомарный UPSERT: инкрементировать ad_attempts, создав строку если нужно.
 
-    Вызывается при удалении объявления недоверенного пользователя или дубля
-    (разделы 6.3, 6.4 ТЗ). Строго атомарный UPDATE — без read-modify-write.
+    Почему UPSERT, а не UPDATE:
+      В редком, но возможном сценарии бот впервые видит пользователя именно
+      через его объявление (parser не запускался, сообщений не было до этого
+      момента в активной сессии бота). Чистый UPDATE в таком случае просто
+      не найдёт строку и молча ничего не сделает — нарушение не попадёт в досье.
+      UPSERT создаёт запись с ad_attempts=1 и message_count=0 (DEFAULT).
+
+    ВАЖНО: NOT NULL DEFAULT 0 у message_count в DDL (models.py) позволяет
+      вставить строку без явного message_count — значение берётся из DEFAULT.
+      first_message_at / last_message_at не указываются — остаются NULL.
+      message_count НЕ трогается при конфликте: удалённое объявление не должно
+      засчитываться как «активность» и копить доверие (раздел 6.3 ТЗ).
     """
     await conn.execute(
-        "UPDATE users SET ad_attempts = ad_attempts + 1 WHERE user_id = ?",
-        (user_id,),
+        """
+        INSERT INTO users (user_id, username, ad_attempts)
+        VALUES (?, ?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET
+            ad_attempts = ad_attempts + 1,
+            username    = COALESCE(excluded.username, users.username)
+        """,
+        (user_id, username),
     )
     await conn.commit()
 
