@@ -4,3 +4,7 @@ pyrogram
 tgcrypto
 python-dotenv
 pymorphy3
+
+# dev / testing
+pytest
+pytest-asyncio

@@ -1,0 +1,253 @@
+"""
+Тесты логики handle_post (раздел 6 ТЗ).
+
+Каждый тест вызывает handle_post([...], bot) напрямую, минуя диспетчер aiogram
+и сборщик альбомов. Это позволяет проверять бизнес-логику без реального бота.
+
+Зависимости:
+  - tmp_db:     временная SQLite БД (из conftest); handle_post читает get_db()
+  - fake_bot:   FakeBot, пишущий вызовы в списки
+  - no_scheduler (autouse): schedule_delete → no-op
+"""
+
+import time
+
+import pytest
+
+import config
+from database import queries
+from handlers.messages import handle_post
+from moderation.duplicates import save_if_new
+from tests.conftest import DAY, FakeMessage
+
+# ─── Вспомогательная функция засева БД ────────────────────────────────────────
+
+async def seed_user(
+    conn,
+    user_id: int,
+    message_count: int,
+    last_active_days_ago: int = 5,
+    username: str = "user",
+) -> None:
+    """Вставить пользователя с готовыми счётчиками минуя upsert (чтобы не инкрементировать)."""
+    now = int(time.time())
+    await conn.execute(
+        "INSERT INTO users (user_id, username, message_count, last_message_at) "
+        "VALUES (?, ?, ?, ?)",
+        (user_id, username, message_count, now - last_active_days_ago * DAY),
+    )
+    await conn.commit()
+
+
+# ─── Тесты ────────────────────────────────────────────────────────────────────
+
+async def test_newbie_ad_deleted_and_muted(tmp_db, fake_bot):
+    """T1: новичок (нет в БД) постит фото + стоп-слово.
+
+    Ожидается: 1 delete, 1 mute, 1 warn, ad_attempts=1, message_count=0,
+               ни одной записи в advertisements.
+    """
+    msg = FakeMessage(
+        user_id=1001, username="ghost",
+        photo=True, caption="Продам велосипед срочно",
+        message_id=10,
+    )
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.deleted    == [10],  "Сообщение должно быть удалено"
+    assert len(fake_bot.restricted) == 1, "Мут должен сработать"
+    assert len(fake_bot.sent)       == 1, "Предупреждение должно быть отправлено"
+    assert "активным участникам" in fake_bot.sent[0]
+
+    row = await queries.get_user(tmp_db, 1001)
+    assert row is not None,            "Запись пользователя должна быть создана"
+    assert row["ad_attempts"]    == 1, "ad_attempts должен быть 1"
+    assert row["message_count"]  == 0, "message_count НЕ должен расти (удалённое ≠ активность)"
+
+    ads = await queries.get_user_ads(tmp_db, 1001)
+    assert ads == [],                  "advertisements НЕ должны создаваться"
+
+
+async def test_newbie_album_all_parts_deleted(tmp_db, fake_bot):
+    """T2: новичок постит альбом из 3 фото, стоп-слово в caption первого.
+
+    handle_post вызывается сразу со всеми 3 сообщениями (сборщик альбомов
+    тестируется отдельно). Ожидается: 3 delete, ровно 1 mute, 1 warn.
+    """
+    mgid = "album_1"
+    msgs = [
+        FakeMessage(user_id=1002, photo=True, caption="Продам диван", message_id=1, media_group_id=mgid),
+        FakeMessage(user_id=1002, photo=True, message_id=2, media_group_id=mgid),
+        FakeMessage(user_id=1002, photo=True, message_id=3, media_group_id=mgid),
+    ]
+    await handle_post(msgs, fake_bot)
+
+    assert sorted(fake_bot.deleted) == [1, 2, 3], "Все 3 части альбома должны быть удалены"
+    assert len(fake_bot.restricted) == 1,          "Мут должен быть ровно один"
+    assert len(fake_bot.sent)       == 1,           "Предупреждение должно быть одно"
+
+    row = await queries.get_user(tmp_db, 1002)
+    assert row["ad_attempts"]   == 1
+    assert row["message_count"] == 0
+
+    ads = await queries.get_user_ads(tmp_db, 1002)
+    assert ads == []
+
+
+async def test_trusted_new_ad_saved(tmp_db, fake_bot):
+    """T3: доверенный (count=40, активен 5 дней назад) постит новое объявление.
+
+    Ожидается: 0 delete, 0 mute, 1 запись в advertisements,
+               message_count=41, 1 строка в messages.
+    """
+    await seed_user(tmp_db, 1003, message_count=40, last_active_days_ago=5)
+
+    msg = FakeMessage(user_id=1003, photo=True, caption="Сдам квартиру", message_id=20)
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.deleted     == [], "Сообщение доверенного НЕ должно удаляться"
+    assert fake_bot.restricted  == [], "Мут не нужен"
+    assert fake_bot.sent        == [], "Предупреждение не нужно"
+
+    row = await queries.get_user(tmp_db, 1003)
+    assert row["message_count"] == 41, "message_count должен инкрементнуться"
+
+    cur = await tmp_db.execute("SELECT COUNT(*) FROM messages WHERE user_id=1003")
+    assert (await cur.fetchone())[0] == 1, "Строка в messages должна появиться"
+
+    ads = await queries.get_user_ads(tmp_db, 1003)
+    assert len(ads) == 1, "Объявление должно быть сохранено в advertisements"
+
+
+async def test_trusted_duplicate_deleted(tmp_db, fake_bot):
+    """T4: доверенный повторно постит то же объявление → дубль.
+
+    Ожидается: 1 delete, 1 mute, warn с «повторная публикация»,
+               ad_attempts=1, message_count НЕ изменился (ещё 40).
+    """
+    await seed_user(tmp_db, 1003, message_count=40, last_active_days_ago=5)
+    # Засеять первое объявление в advertisements
+    await save_if_new(1003, "Сдам квартиру", int(time.time()))
+
+    msg = FakeMessage(user_id=1003, photo=True, caption="Сдам квартиру", message_id=21)
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.deleted    == [21], "Дубль должен быть удалён"
+    assert len(fake_bot.restricted) == 1, "Мут за дубль"
+    assert len(fake_bot.sent)  == 1
+    assert "повторная публикация" in fake_bot.sent[0]
+
+    row = await queries.get_user(tmp_db, 1003)
+    assert row["ad_attempts"]   == 1
+    assert row["message_count"] == 40, "message_count НЕ должен расти при дубле"
+
+    ads = await queries.get_user_ads(tmp_db, 1003)
+    assert len(ads) == 1, "Вторая запись в advertisements НЕ должна создаваться"
+
+
+async def test_trusted_different_ad_saved(tmp_db, fake_bot):
+    """T5: доверенный постит другое объявление после первого.
+
+    Ожидается: 0 delete, в advertisements 2 записи, message_count инкрементнут.
+    """
+    await seed_user(tmp_db, 1003, message_count=40, last_active_days_ago=5)
+    await save_if_new(1003, "Сдам квартиру", int(time.time()))
+
+    msg = FakeMessage(user_id=1003, photo=True, caption="Продам диван", message_id=22)
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.deleted    == [], "Новое объявление НЕ удаляется"
+    assert fake_bot.restricted == []
+
+    ads = await queries.get_user_ads(tmp_db, 1003)
+    assert len(ads) == 2, "Должно быть 2 объявления в advertisements"
+
+    row = await queries.get_user(tmp_db, 1003)
+    assert row["message_count"] == 41
+
+
+async def test_plain_text_no_media_recorded(tmp_db, fake_bot):
+    """T6: обычное текстовое сообщение без медиа.
+
+    Ожидается: 0 delete, 0 mute, message_count +1, строка в messages.
+    """
+    await seed_user(tmp_db, 1004, message_count=10, last_active_days_ago=2)
+
+    msg = FakeMessage(user_id=1004, text="Добрый вечер, соседи!", message_id=30)
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.deleted    == []
+    assert fake_bot.restricted == []
+    assert fake_bot.sent       == []
+
+    row = await queries.get_user(tmp_db, 1004)
+    assert row["message_count"] == 11
+
+    cur = await tmp_db.execute("SELECT COUNT(*) FROM messages WHERE user_id=1004")
+    assert (await cur.fetchone())[0] == 1
+
+
+async def test_sleeping_user_treated_as_untrusted(tmp_db, fake_bot):
+    """T7: «спящий» (count=200, но last_active=70 дней назад).
+
+    Стражевой тест контракта «is_trusted вызывается ДО upsert_user»:
+    если бы upsert шёл первым, last_message_at стал бы = now и спящий
+    прошёл бы проверку свежести как доверенный.
+
+    Ожидается: трактуется как НЕДОВЕРЕННЫЙ → 1 delete, mute, warn;
+               message_count остался 200 (не уpsert-нут).
+    """
+    await seed_user(tmp_db, 1005, message_count=200, last_active_days_ago=70)
+
+    msg = FakeMessage(user_id=1005, photo=True, caption="Продам велосипед", message_id=40)
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.deleted    == [40], "Спящий должен получить удаление"
+    assert len(fake_bot.restricted) == 1, "Спящий должен быть замьючен"
+    assert len(fake_bot.sent)  == 1
+
+    row = await queries.get_user(tmp_db, 1005)
+    assert row["message_count"] == 200, "message_count спящего НЕ должен измениться"
+    assert row["ad_attempts"]   == 1
+
+
+async def test_whitelisted_user_bypasses_all_checks(tmp_db, fake_bot, monkeypatch):
+    """T8: пользователь в WHITELIST_IDS → байпас всех проверок.
+
+    Ожидается: 0 delete, 0 mute, message_count +1, НИ ОДНОЙ записи
+               в advertisements (вайтлист обходит и анти-дубль).
+    """
+    monkeypatch.setattr(config, "WHITELIST_IDS", [5555])
+
+    msg = FakeMessage(user_id=5555, photo=True, caption="Продам дачу", message_id=50)
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.deleted    == [], "Вайтлист-пользователь НЕ удаляется"
+    assert fake_bot.restricted == [], "Мут не нужен"
+
+    row = await queries.get_user(tmp_db, 5555)
+    assert row is not None
+    assert row["message_count"] == 1, "Активность должна записываться"
+
+    ads = await queries.get_user_ads(tmp_db, 5555)
+    assert ads == [], "save_if_new НЕ вызывается для вайтлиста"
+
+
+async def test_mute_failure_does_not_stop_warn(tmp_db, fake_bot_mute_fails):
+    """T9: restrict_chat_member бросает TelegramBadRequest (нарушитель — админ).
+
+    Ожидается: delete всё равно произошёл; mute вернул False (restricted пуст);
+               warn всё равно отправлен; ad_attempts=1.
+    """
+    msg = FakeMessage(
+        user_id=1006, photo=True, caption="Продам велосипед", message_id=60
+    )
+    await handle_post([msg], fake_bot_mute_fails)
+
+    assert fake_bot_mute_fails.deleted == [60], "Удаление должно быть выполнено"
+    assert fake_bot_mute_fails.restricted == [], "restrict_chat_member упал → список пуст"
+    assert len(fake_bot_mute_fails.sent) == 1,  "Warn должен быть отправлен несмотря на мут"
+
+    row = await queries.get_user(tmp_db, 1006)
+    assert row["ad_attempts"]   == 1
+    assert row["message_count"] == 0
