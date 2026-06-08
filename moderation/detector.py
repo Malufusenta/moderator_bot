@@ -82,8 +82,12 @@ def get_combined_text(message) -> str:
     return (message.text or "") + " " + (message.caption or "")
 
 
-def _has_media(message) -> bool:
-    """True, если сообщение содержит фото, видео или анимацию (GIF)."""
+def has_media(message) -> bool:
+    """True, если сообщение содержит фото, видео или анимацию (GIF).
+
+    Публичная функция — используется в handlers/messages.py для проверки
+    наличия медиа по всему альбому: any(has_media(m) for m in messages).
+    """
     return bool(
         message.photo
         or message.video
@@ -91,10 +95,13 @@ def _has_media(message) -> bool:
     )
 
 
-def _contains_stop_word(text: str) -> bool:
-    """Проверить наличие стоп-слова двумя проходами.
+def contains_stopword(text: str) -> bool:
+    """Проверить наличие стоп-слова в тексте двумя проходами.
 
-    Проход 1: deobfuscate + regex \b — основной.
+    Публичная функция — используется в handlers/messages.py для проверки
+    объединённого текста всего альбома (caption всех сообщений).
+
+    Проход 1: deobfuscate + regex с \\b — основной.
     Проход 2: collapse + substring — ловит расклеенные слова.
     """
     # Проход 1: деобфускация гомоглифов + поиск по \b-границам
@@ -121,14 +128,8 @@ def is_advertisement(message) -> bool:
       1. В сообщении есть медиа (фото / видео / анимация).
       2. Текст (text или caption) содержит стоп-слово.
 
-    Порядок проверок: сначала медиа (дешевле) — short-circuit,
-    если медиа нет, текст не анализируем.
+    Тонкий обёртыватель над has_media + contains_stopword.
+    Для одиночных сообщений достаточен; альбомы обрабатываются
+    напрямую через has_media/contains_stopword в handlers/messages.py.
     """
-    if not _has_media(message):
-        return False
-
-    combined = get_combined_text(message)
-    if not combined.strip():
-        return False
-
-    return _contains_stop_word(combined)
+    return has_media(message) and contains_stopword(get_combined_text(message))
