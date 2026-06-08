@@ -288,3 +288,42 @@ async def get_user_profile(
     )
     row = await cursor.fetchone()
     return _row_to_dict(row)
+
+
+# ─── парсер истории (раздел 5) ────────────────────────────────────────────────
+
+async def save_parsed_stats(
+    conn: aiosqlite.Connection,
+    user_id: int,
+    username: str | None,
+    message_count: int,
+    first_message_at: int,
+    last_message_at: int,
+) -> None:
+    """Записать агрегированную статистику из истории чата.
+
+    SET-семантика (не инкремент): перезаписывает message_count,
+    first_message_at, last_message_at, username.
+    ad_attempts НЕ трогается — данные о нарушениях, собранные ботом
+    в рантайме, не должны сбрасываться при повторном запуске парсера.
+
+    Вызывается только из parser.py (разовый сид-скрипт, раздел 5 ТЗ).
+    Повторный запуск перезапишет агрегированную статистику, но сохранит
+    все данные о нарушениях (ad_attempts).
+
+    Примечание: вызывающий код фиксирует транзакцию пакетно
+    (один conn.commit() после всего цикла записей).
+    """
+    await conn.execute(
+        """
+        INSERT INTO users (user_id, username, message_count,
+                           first_message_at, last_message_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username         = COALESCE(excluded.username, users.username),
+            message_count    = excluded.message_count,
+            first_message_at = excluded.first_message_at,
+            last_message_at  = excluded.last_message_at
+        """,
+        (user_id, username, message_count, first_message_at, last_message_at),
+    )
