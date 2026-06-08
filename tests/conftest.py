@@ -35,8 +35,9 @@ class FakeUser:
 
 
 class FakeChat:
-    def __init__(self, chat_id: int = TEST_CHAT_ID):
-        self.id = chat_id
+    def __init__(self, chat_id: int = TEST_CHAT_ID, chat_type: str = "supergroup"):
+        self.id   = chat_id
+        self.type = chat_type
 
 
 class FakeMessage:
@@ -66,9 +67,10 @@ class FakeMessage:
         message_id: int = 1,
         media_group_id: str | None = None,
         chat_id: int = TEST_CHAT_ID,
+        chat_type: str = "supergroup",
     ):
         self.from_user = FakeUser(user_id, username)
-        self.chat = FakeChat(chat_id)
+        self.chat = FakeChat(chat_id, chat_type)
         self.text = text
         self.caption = caption
         # aiogram возвращает list[PhotoSize]; для теста нужен truthy объект
@@ -77,7 +79,19 @@ class FakeMessage:
         self.animation = MagicMock() if animation else None
         self.message_id = message_id
         self.media_group_id = media_group_id
-        self.bot = None  # handle_post получает bot явным аргументом, не через message
+        # forward-поля (None по умолчанию; задаются в admin-тестах)
+        self.forward_origin = None
+        self.forward_from   = None
+        self.forward_date   = None
+        # bot: None для handle_post (принимает bot явным аргументом);
+        # FakeBot — для admin-хендлеров, которые используют message.answer()
+        self.bot: "FakeBot | None" = None
+
+    async def answer(self, text: str | None = None, **kw) -> "_SentMsg":
+        """Имитирует message.answer() — пишет в self.bot.sent если бот задан."""
+        if self.bot is not None:
+            self.bot.sent.append(text)
+        return _SentMsg()
 
 
 class _SentMsg:
