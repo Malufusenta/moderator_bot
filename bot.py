@@ -16,7 +16,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
-
+from aiogram.client.default import DefaultBotProperties
 import config
 from database.db import init_db, close_db
 from handlers.messages import router as messages_router
@@ -28,7 +28,10 @@ logging.basicConfig(level=logging.INFO)
 async def main() -> None:
     await init_db()
 
-    bot = Bot(token=config.BOT_TOKEN, parse_mode=ParseMode.HTML)
+    bot = Bot(
+    token=config.BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
     dp = Dispatcher()
 
     dp.include_router(messages_router)
