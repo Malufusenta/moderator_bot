@@ -103,19 +103,29 @@ def _format_dossier(profile: dict, now_ts: int) -> str:
     """Собрать текст досье из профиля пользователя."""
     username = profile.get("username")
     uid      = profile["user_id"]
-    user_line    = f"@{username} (ID: {uid})" if username else f"ID: {uid}"
-    invite_link  = profile.get("invite_link") or "Нет данных"
-    status       = _determine_status(profile, now_ts)
-    activity     = profile.get("messages_last_period", 0)
+    user_line   = f"@{username} (ID: {uid})" if username else f"ID: {uid}"
+    invite_link = profile.get("invite_link") or "Нет данных"
+    status      = _determine_status(profile, now_ts)
+
+    last = profile.get("last_message_at")
+    cutoff = now_ts - config.RECENCY_DAYS * 86_400
+    if last is not None:
+        days_ago      = (now_ts - last) // 86_400
+        in_window_str = "Да" if last >= cutoff else "Нет"
+        days_ago_str  = str(days_ago)
+    else:
+        days_ago_str  = "Нет данных"
+        in_window_str = "Нет данных"
 
     return (
         f"👤 Пользователь: {user_line}\n"
         f"📅 В чате с: {_fmt_ts(profile.get('joined_at'))}\n"
         f"🔗 Пришёл по ссылке: {invite_link}\n"
         f"✉️ Сообщений всего: {profile['message_count']}\n"
-        f"🟢 Активность за {config.RECENCY_DAYS} дней: {activity}\n"
         f"⏱ Первое сообщение: {_fmt_ts(profile.get('first_message_at'))}\n"
-        f"⏱ Последняя активность: {_fmt_ts(profile.get('last_message_at'))}\n"
+        f"⏱ Последняя активность: {_fmt_ts(last)}\n"
+        f"📆 Дней с последней активности: {days_ago_str}\n"
+        f"🔍 В окне свежести ({config.RECENCY_DAYS} дн.): {in_window_str}\n"
         f"🛑 Попыток нарушений: {profile['ad_attempts']}\n"
         f"⚖️ Статус: {status}"
     )
