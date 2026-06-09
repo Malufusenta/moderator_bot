@@ -251,3 +251,46 @@ async def test_mute_failure_does_not_stop_warn(tmp_db, fake_bot_mute_fails):
     row = await queries.get_user(tmp_db, 1006)
     assert row["ad_attempts"]   == 1
     assert row["message_count"] == 0
+
+
+async def test_dry_run_no_actions_but_db_written(tmp_db, fake_bot, monkeypatch, caplog):
+    """T10: DRY_RUN=True — карательные действия пропускаются, БД пишется как обычно.
+
+    Новичок (нет в БД) постит фото + стоп-слово.
+    Ожидается:
+      - fake_bot.deleted == [] и fake_bot.restricted == [] (delete/mute не вызваны)
+      - fake_bot.sent == []                               (warn не вызван)
+      - ad_attempts == 1                                  (инкремент выполнен)
+      - message_count == 0                                (удалённое не активность)
+      - В логе присутствует запись [DRY_RUN] с user_id и причиной
+    """
+    import logging
+    import config as cfg
+
+    monkeypatch.setattr(cfg, "DRY_RUN", True)
+
+    msg = FakeMessage(
+        user_id=1007, username="dryuser",
+        photo=True, caption="Продам велосипед",
+        message_id=70,
+    )
+
+    with caplog.at_level(logging.INFO, logger="handlers.messages"):
+        await handle_post([msg], fake_bot)
+
+    # Карательных действий нет
+    assert fake_bot.deleted    == [], "DRY_RUN: удалений быть не должно"
+    assert fake_bot.restricted == [], "DRY_RUN: мутов быть не должно"
+    assert fake_bot.sent       == [], "DRY_RUN: предупреждений быть не должно"
+
+    # Счётчики написаны как в боевом режиме
+    row = await queries.get_user(tmp_db, 1007)
+    assert row is not None
+    assert row["ad_attempts"]   == 1, "ad_attempts должен инкрементиться даже в DRY_RUN"
+    assert row["message_count"] == 0, "message_count не растёт (объявление не активность)"
+
+    # Лог содержит [DRY_RUN] и user_id
+    dry_records = [r for r in caplog.records if "[DRY_RUN]" in r.message]
+    assert dry_records, "В логе должна быть хотя бы одна запись [DRY_RUN]"
+    assert "1007" in dry_records[0].message, "user_id должен быть в лог-записи"
+    assert "недоверенный" in dry_records[0].message, "причина должна быть в лог-записи"

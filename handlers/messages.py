@@ -126,32 +126,42 @@ async def handle_post(messages: list[Message], bot: Bot) -> None:
 
     # ── Шаг 4: недоверенный пользователь ─────────────────────────────────────
     if not trusted:
-        await _delete_messages(bot, chat_id, messages)
-        await queries.increment_ad_attempts(conn, user_id, username)
-        await actions.mute_user(bot, chat_id, user_id, hours)
-        await actions.warn(
-            bot, chat_id,
+        warn_text = (
             f"{mention}, публикация объявлений доступна только активным участникам. "
-            f"Вы переведены в режим чтения на {hours} часа.",
-            config.WARNING_DELETE_SECONDS,
+            f"Вы переведены в режим чтения на {hours} часа."
         )
-        # Не записываем: удалённое объявление не считается активностью
+        await queries.increment_ad_attempts(conn, user_id, username)
+        if config.DRY_RUN:
+            logger.info(
+                "[DRY_RUN] user_id=%d причина=недоверенный действие=delete+mute+warn текст=%r",
+                user_id, warn_text,
+            )
+        else:
+            await _delete_messages(bot, chat_id, messages)
+            await actions.mute_user(bot, chat_id, user_id, hours)
+            await actions.warn(bot, chat_id, warn_text, config.WARNING_DELETE_SECONDS)
+        # Не записываем: удалённое/заблокированное объявление не считается активностью
         return
 
     # ── Шаг 5: доверенный — проверка на дубль ────────────────────────────────
     dup = await duplicates.check_duplicate(user_id, combined_text, now_ts)
 
     if dup:
-        await _delete_messages(bot, chat_id, messages)
-        await queries.increment_ad_attempts(conn, user_id, username)
-        await actions.mute_user(bot, chat_id, user_id, hours)
-        await actions.warn(
-            bot, chat_id,
+        warn_text = (
             f"{mention}, повторная публикация того же объявления запрещена. "
-            f"Вы переведены в режим чтения на {hours} часа.",
-            config.WARNING_DELETE_SECONDS,
+            f"Вы переведены в режим чтения на {hours} часа."
         )
-        # Не записываем и не save_if_new: это нарушение, не пост
+        await queries.increment_ad_attempts(conn, user_id, username)
+        if config.DRY_RUN:
+            logger.info(
+                "[DRY_RUN] user_id=%d причина=дубль действие=delete+mute+warn текст=%r",
+                user_id, warn_text,
+            )
+        else:
+            await _delete_messages(bot, chat_id, messages)
+            await actions.mute_user(bot, chat_id, user_id, hours)
+            await actions.warn(bot, chat_id, warn_text, config.WARNING_DELETE_SECONDS)
+        # Не записываем и не save_if_new: нарушение, не пост
         return
 
     # ── Шаг 5b: новое оригинальное объявление — сохранить и засчитать ────────

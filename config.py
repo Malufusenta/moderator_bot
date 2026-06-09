@@ -48,6 +48,13 @@ SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
 MUTE_HOURS: int = int(os.getenv("MUTE_HOURS", "24"))
 WARNING_DELETE_SECONDS: int = int(os.getenv("WARNING_DELETE_SECONDS", "15"))
 
+# ─── Режим наблюдения ─────────────────────────────────────────────────────────
+
+# Если True — бот НЕ удаляет сообщения, НЕ мутит, НЕ предупреждает.
+# Счётчики активности и ad_attempts пишутся как обычно — поведение совпадает
+# с боевым, кроме карательных действий. Удобно для начальной настройки порогов.
+DRY_RUN: bool = os.getenv("DRY_RUN", "false").lower() in ("1", "true", "yes")
+
 # ─── БД ───────────────────────────────────────────────────────────────────────
 
 DB_PATH: str = os.getenv("DB_PATH", "data/bot.db")
