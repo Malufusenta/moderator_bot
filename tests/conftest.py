@@ -2,12 +2,21 @@
 # conftest.py обрабатывается раньше тестовых модулей, поэтому os.environ здесь
 # будут видны при первом импорте config в тест-файлах.
 import os
+# ── Telegram ──────────────────────────────────────────────────────────────────
 os.environ.setdefault("BOT_TOKEN",  "0:test_stub_token")
 os.environ.setdefault("API_ID",     "12345")
 os.environ.setdefault("API_HASH",   "testhashstub")
 os.environ.setdefault("CHAT_ID",    "-100123456789")
 os.environ.setdefault("ADMIN_IDS",  "")
 os.environ.setdefault("WHITELIST_IDS", "")
+# ── Пороги (изолируем тесты от .env — значения должны быть предсказуемы) ──────
+os.environ.setdefault("TRUST_LIMIT",          "30")
+os.environ.setdefault("RECENCY_DAYS",         "60")
+os.environ.setdefault("RECENCY_MIN_MESSAGES", "1")
+os.environ.setdefault("SIMILARITY_THRESHOLD", "0.85")
+os.environ.setdefault("MUTE_HOURS",           "24")
+os.environ.setdefault("WARNING_DELETE_SECONDS", "15")
+os.environ.setdefault("DRY_RUN",              "false")
 
 from unittest.mock import MagicMock
 
