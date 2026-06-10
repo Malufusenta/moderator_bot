@@ -163,7 +163,7 @@ async def handle_check(message: Message) -> None:
     if len(parts) < 2 or not parts[1].strip():
         await message.answer(
             "Использование:\n"
-            "  /check <user_id>   — поиск по числовому ID\n"
+            "  /check 123456789   — поиск по числовому ID\n"
             "  /check @username   — поиск по username (ненадёжно)"
         )
         return
