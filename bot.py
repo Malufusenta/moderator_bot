@@ -21,6 +21,7 @@ import config
 from database.db import init_db, close_db
 from handlers.messages import router as messages_router
 from handlers.admin import router as admin_router
+from handlers.members import router as members_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -36,9 +37,10 @@ async def main() -> None:
 
     dp.include_router(messages_router)
     dp.include_router(admin_router)
+    dp.include_router(members_router)
 
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         # Корректно закрыть соединение с БД при остановке (раздел 8 ТЗ)
         await close_db()

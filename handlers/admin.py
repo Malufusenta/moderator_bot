@@ -101,13 +101,26 @@ def _determine_status(profile: dict, now_ts: int) -> str:
     return "🟡 Спящий"
 
 
-def _format_dossier(profile: dict, now_ts: int) -> str:
+def _format_added_by(profile: dict, added_by_user: dict | None) -> str:
+    """Сформировать строку «Кто добавил» для досье."""
+    added_by_id = profile.get("added_by")
+    if added_by_id is not None:
+        if added_by_user and added_by_user.get("username"):
+            return f"@{added_by_user['username']} (ID: {added_by_id})"
+        return f"ID: {added_by_id}"
+    if profile.get("joined_at") is not None:
+        return "вступил сам"
+    return "Нет данных"
+
+
+def _format_dossier(profile: dict, now_ts: int, added_by_user: dict | None = None) -> str:
     """Собрать текст досье из профиля пользователя."""
     username = profile.get("username")
     uid      = profile["user_id"]
     user_line   = f"@{username} (ID: {uid})" if username else f"ID: {uid}"
     invite_link = profile.get("invite_link") or "Нет данных"
     status      = _determine_status(profile, now_ts)
+    added_by_str = _format_added_by(profile, added_by_user)
 
     last = profile.get("last_message_at")
     cutoff = now_ts - config.RECENCY_DAYS * 86_400
@@ -122,6 +135,7 @@ def _format_dossier(profile: dict, now_ts: int) -> str:
     return (
         f"👤 Пользователь: {user_line}\n"
         f"📅 В чате с: {_fmt_ts(profile.get('joined_at'))}\n"
+        f"👥 Кто добавил: {added_by_str}\n"
         f"🔗 Пришёл по ссылке: {invite_link}\n"
         f"✉️ Сообщений всего: {profile['message_count']}\n"
         f"⏱ Первое сообщение: {_fmt_ts(profile.get('first_message_at'))}\n"
@@ -144,7 +158,11 @@ async def _send_dossier(message: Message, user_id: int) -> None:
         await message.answer("Нет данных по этому пользователю.")
         return
 
-    await message.answer(_format_dossier(profile, now_ts))
+    added_by_user: dict | None = None
+    if profile.get("added_by") is not None:
+        added_by_user = await queries.get_user(conn, profile["added_by"])
+
+    await message.answer(_format_dossier(profile, now_ts, added_by_user))
 
 
 # ─── Хендлеры ─────────────────────────────────────────────────────────────────

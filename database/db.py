@@ -45,6 +45,14 @@ async def init_db() -> None:
         await _conn.execute(statement)
     await _conn.commit()
 
+    # Идемпотентная миграция: добавить added_by если колонки ещё нет
+    # (необходимо для существующих БД, созданных до этой версии схемы)
+    try:
+        await _conn.execute("ALTER TABLE users ADD COLUMN added_by INTEGER")
+        await _conn.commit()
+    except aiosqlite.OperationalError:
+        pass  # колонка уже существует
+
 
 async def close_db() -> None:
     """Корректно закрыть соединение при остановке бота.

@@ -276,6 +276,7 @@ async def get_user_profile(
             u.first_message_at,
             u.last_message_at,
             u.ad_attempts,
+            u.added_by,
             COUNT(m.id) AS messages_last_period
         FROM users u
         LEFT JOIN messages m
@@ -288,6 +289,39 @@ async def get_user_profile(
     )
     row = await cursor.fetchone()
     return _row_to_dict(row)
+
+
+# ─── вступление в чат (раздел 9) ─────────────────────────────────────────────
+
+async def record_join(
+    conn: aiosqlite.Connection,
+    user_id: int,
+    username: str | None,
+    joined_at: int,
+    invite_link: str | None,
+    added_by: int | None,
+) -> None:
+    """Зафиксировать вступление участника в чат.
+
+    Трогает только joined_at, invite_link, added_by, username.
+    НЕ трогает message_count, first_message_at, last_message_at, ad_attempts —
+    данные об активности, накопленные до или после вступления, сохраняются.
+
+    Вызывается из handlers/members.py при ChatMemberUpdated (JOIN_TRANSITION).
+    """
+    await conn.execute(
+        """
+        INSERT INTO users (user_id, username, joined_at, invite_link, added_by)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username    = COALESCE(excluded.username, users.username),
+            joined_at   = excluded.joined_at,
+            invite_link = excluded.invite_link,
+            added_by    = excluded.added_by
+        """,
+        (user_id, username, joined_at, invite_link, added_by),
+    )
+    await conn.commit()
 
 
 # ─── парсер истории (раздел 5) ────────────────────────────────────────────────
