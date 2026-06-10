@@ -77,7 +77,7 @@ def _fmt_ts(ts: int | None) -> str:
     if ts is None:
         return "Нет данных"
     dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-    return dt.strftime("%Y-%m-%d %H:%M UTC")
+    return dt.strftime("%d.%m.%Y %H:%M UTC")
 
 
 def _determine_status(profile: dict, now_ts: int) -> str:
