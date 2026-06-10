@@ -65,8 +65,8 @@ DB_PATH: str = os.getenv("DB_PATH", "data/bot.db")
 # Ключ — точный URL ссылки (https://t.me/+XXXX), значение — отображаемое имя.
 # Владелец заполняет реальными URL перед деплоем.
 INVITE_LINKS: dict[str, str] = {
-    # "https://t.me/+ВПИШИ_URL_ПАРСЕРА": "парсер",
-    # "https://t.me/+ВПИШИ_URL_ЛОББИ": "Лобби",
+    "https://t.me/+mdrYW6DeLek5OTYy": "Лобби",
+    "https://t.me/+nWEB7ZFp7m0yZjAy": "Парсер",
 }
 
 # Создать папку для БД, если её ещё нет
