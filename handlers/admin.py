@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from aiogram import F, Router
 from aiogram.filters import BaseFilter, Command
@@ -72,12 +72,14 @@ def _is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
 
+_TZ_VN = timezone(timedelta(hours=7))  # UTC+7 Вьетнам
+
 def _fmt_ts(ts: int | None) -> str:
-    """Преобразовать unix-timestamp в читаемую строку UTC или 'Нет данных'."""
+    """Преобразовать unix-timestamp в читаемую строку (UTC+7) или 'Нет данных'."""
     if ts is None:
         return "Нет данных"
-    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-    return dt.strftime("%d.%m.%Y %H:%M UTC")
+    dt = datetime.fromtimestamp(ts, tz=_TZ_VN)
+    return dt.strftime("%d.%m.%Y %H:%M (UTC+7)")
 
 
 def _determine_status(profile: dict, now_ts: int) -> str:
