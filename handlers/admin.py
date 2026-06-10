@@ -16,19 +16,17 @@
                                    приватная пересылка (hidden_user) → сообщение
                                    о невозможности определить отправителя.
 
-Формат досье (раздел 7 ТЗ):
+Формат досье:
   👤 Пользователь: @username (ID: …)
   📅 В чате с: …
-  🔗 Пришёл по ссылке: …
+  🔗 Добавил / вступил сам: …
   ✉️ Сообщений всего: …
-  🟢 Активность за 60 дней: …
   ⏱ Первое сообщение: …
   ⏱ Последняя активность: …
-  🛑 Попыток нарушений: …
-  ⚖️ Статус: Доверенный / Спящий / Новичок
-
-Статус определяется по last_message_at (те же правила, что в is_trusted),
-а не по счётчику messages_last_period (раздел 6.3 / 7 ТЗ).
+  📆 Дней с последней активности: …
+  ⚖️ Статус: 🔴 Новичок | 🟢 Старичок   (по стажу: joined_at или first_message_at)
+  ✅ Доверенный: Да | Нет                (message_count >= TRUST_LIMIT)
+  🛑 Нарушений: N[, последнее <дата>]
 """
 
 from __future__ import annotations
@@ -68,11 +66,11 @@ class _IsForwarded(BaseFilter):
 # ─── Вспомогательные функции ──────────────────────────────────────────────────
 
 def _is_admin(user_id: int) -> bool:
-    """Проверить, входит ли user_id в список ADMIN_IDS."""
     return user_id in config.ADMIN_IDS
 
 
 _TZ_VN = timezone(timedelta(hours=7))  # UTC+7 Вьетнам
+
 
 def _fmt_ts(ts: int | None) -> str:
     """Преобразовать unix-timestamp в читаемую строку (UTC+7) или 'Нет данных'."""
@@ -82,73 +80,87 @@ def _fmt_ts(ts: int | None) -> str:
     return dt.strftime("%d.%m.%Y %H:%M")
 
 
-def _determine_status(profile: dict, now_ts: int) -> str:
-    """Определить статус пользователя по тем же правилам, что is_trusted.
+def _seniority_status(profile: dict, now_ts: int) -> str:
+    """Статус по стажу: Новичок (<NEWCOMER_DAYS дней) или Старичок.
 
-    Правила (раздел 6.3 ТЗ):
-      Новичок:   message_count < TRUST_LIMIT
-      Доверенный: message_count >= TRUST_LIMIT И last_message_at >= cutoff
-      Спящий:    message_count >= TRUST_LIMIT И last_message_at < cutoff (или None)
+    База — joined_at; если не известен — first_message_at.
+    Оба None → 'Нет данных'.
+    Display-only, не влияет на гейт модерации.
     """
-    cutoff = now_ts - config.RECENCY_DAYS * 86_400
-    mc   = profile["message_count"]
-    last = profile.get("last_message_at")
+    base_ts = profile.get("joined_at") or profile.get("first_message_at")
+    if base_ts is None:
+        return "Нет данных"
+    days = (now_ts - base_ts) // 86_400
+    return "🔴 Новичок" if days < config.NEWCOMER_DAYS else "🟢 Старичок"
 
-    if mc < config.TRUST_LIMIT:
-        return "🔴 Новичок"
-    if last is not None and last >= cutoff:
-        return "🟢 Доверенный"
-    return "🟡 Спящий"
+
+def _is_trusted_display(profile: dict) -> str:
+    """'Да' если message_count >= TRUST_LIMIT, иначе 'Нет'."""
+    return "Да" if profile["message_count"] >= config.TRUST_LIMIT else "Нет"
 
 
 def _format_added_by(profile: dict, added_by_user: dict | None) -> str:
-    """Сформировать строку «Кто добавил» для досье."""
+    """Сформировать строку источника появления участника.
+
+    added_by не None  → 'добавил @ник (ID: X)' / 'добавил ID: X'
+    invite_link известна → 'по ссылке «Имя»' (из config.INVITE_LINKS) / 'по ссылке'
+    оба None          → 'Нет данных'
+    """
     added_by_id = profile.get("added_by")
     if added_by_id is not None:
         if added_by_user and added_by_user.get("username"):
-            return f"@{added_by_user['username']} (ID: {added_by_id})"
-        return f"ID: {added_by_id}"
-    if profile.get("joined_at") is not None:
-        return "вступил сам"
+            return f"добавил @{added_by_user['username']} (ID: {added_by_id})"
+        return f"добавил ID: {added_by_id}"
+
+    invite_link = profile.get("invite_link")
+    if invite_link:
+        name = config.INVITE_LINKS.get(invite_link)
+        if name:
+            return f"по ссылке «{name}»"
+        return "по ссылке"
+
     return "Нет данных"
 
 
 def _format_dossier(profile: dict, now_ts: int, added_by_user: dict | None = None) -> str:
     """Собрать текст досье из профиля пользователя."""
-    username = profile.get("username")
-    uid      = profile["user_id"]
-    user_line   = f"@{username} (ID: {uid})" if username else f"ID: {uid}"
-    invite_link = profile.get("invite_link") or "Нет данных"
-    status      = _determine_status(profile, now_ts)
-    added_by_str = _format_added_by(profile, added_by_user)
+    username  = profile.get("username")
+    uid       = profile["user_id"]
+    user_line = f"@{username} (ID: {uid})" if username else f"ID: {uid}"
+
+    join_source  = _format_added_by(profile, added_by_user)
+    seniority    = _seniority_status(profile, now_ts)
+    trusted_str  = _is_trusted_display(profile)
 
     last = profile.get("last_message_at")
-    cutoff = now_ts - config.RECENCY_DAYS * 86_400
     if last is not None:
-        days_ago      = (now_ts - last) // 86_400
-        in_window_str = "Да" if last >= cutoff else "Нет"
-        days_ago_str  = str(days_ago)
+        days_ago_str = str((now_ts - last) // 86_400)
     else:
-        days_ago_str  = "Нет данных"
-        in_window_str = "Нет данных"
+        days_ago_str = "Нет данных"
+
+    violations = profile["ad_attempts"]
+    last_viol  = profile.get("last_ad_attempt_at")
+    if violations > 0 and last_viol is not None:
+        violations_str = f"{violations}, последнее {_fmt_ts(last_viol)}"
+    else:
+        violations_str = str(violations)
 
     return (
         f"👤 Пользователь: {user_line}\n"
         f"📅 В чате с: {_fmt_ts(profile.get('joined_at'))}\n"
-        f"👥 Кто добавил: {added_by_str}\n"
-        f"🔗 Пришёл по ссылке: {invite_link}\n"
+        f"🔗 Добавил / вступил сам: {join_source}\n"
         f"✉️ Сообщений всего: {profile['message_count']}\n"
         f"⏱ Первое сообщение: {_fmt_ts(profile.get('first_message_at'))}\n"
         f"⏱ Последняя активность: {_fmt_ts(last)}\n"
         f"📆 Дней с последней активности: {days_ago_str}\n"
-        f"🔍 В окне свежести ({config.RECENCY_DAYS} дн.): {in_window_str}\n"
-        f"🛑 Попыток нарушений: {profile['ad_attempts']}\n"
-        f"⚖️ Статус: {status}"
+        f"⚖️ Статус: {seniority}\n"
+        f"✅ Доверенный: {trusted_str}\n"
+        f"🛑 Нарушений: {violations_str}"
     )
 
 
 async def _send_dossier(message: Message, user_id: int) -> None:
-    """Запросить профиль и отправить досье. Если пользователь не найден — сообщить об этом."""
+    """Запросить профиль и отправить досье."""
     now_ts = int(time.time())
     cutoff = now_ts - config.RECENCY_DAYS * 86_400
     conn   = get_db()
@@ -169,13 +181,9 @@ async def _send_dossier(message: Message, user_id: int) -> None:
 
 @router.message(Command("check"))
 async def handle_check(message: Message) -> None:
-    """/check <user_id|@username> — досье по ID или username.
-
-    Поиск по username ненадёжен (может смениться) — рядом с результатом
-    выводится предупреждение (раздел 8 ТЗ).
-    """
+    """/check <user_id|@username> — досье по ID или username."""
     if not message.from_user or not _is_admin(message.from_user.id):
-        return  # не-админ — молча игнорируем
+        return
 
     parts = (message.text or "").split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
@@ -189,11 +197,9 @@ async def handle_check(message: Message) -> None:
     arg = parts[1].strip().lstrip("@")
 
     if arg.isdigit():
-        # Числовой ID — надёжный путь
         await _send_dossier(message, int(arg))
         return
 
-    # Username — поиск в БД
     conn    = get_db()
     user_id = await queries.find_user_id_by_username(conn, arg)
     if user_id is None:
@@ -209,21 +215,12 @@ async def handle_check(message: Message) -> None:
 
 @router.message(_IsForwarded())
 async def handle_forward(message: Message) -> None:
-    """Пересланное сообщение — показать досье исходного отправителя.
-
-    Поддерживает оба API:
-      - forward_origin (Telegram Bot API ≥ 7.0 / aiogram 3.7+):
-          MessageOriginUser      → sender_user.id
-          MessageOriginHiddenUser → «приватная пересылка»
-          прочие                  → «канал/чат»
-      - forward_from (старый API): прямой User или None при приватности.
-    """
+    """Пересланное сообщение — показать досье исходного отправителя."""
     if not message.from_user or not _is_admin(message.from_user.id):
-        return  # не-админ — молча игнорируем
+        return
 
     user_id: int | None = None
 
-    # ── Новый API: forward_origin ─────────────────────────────────────────────
     origin = getattr(message, "forward_origin", None)
     if origin is not None:
         origin_type = getattr(origin, "type", None)
@@ -239,27 +236,23 @@ async def handle_forward(message: Message) -> None:
             if sender is not None:
                 user_id = sender.id
             else:
-                # Теоретически невозможно, но обрабатываем аккуратно
                 await message.answer(
                     "Не удалось определить отправителя (приватная пересылка)."
                 )
                 return
 
         else:
-            # MessageOriginChat / MessageOriginChannel — нет личного user_id
             await message.answer(
                 "Не удалось определить отправителя "
                 "(сообщение переслано из канала или чата)."
             )
             return
 
-    # ── Старый API: forward_from ──────────────────────────────────────────────
     if user_id is None:
         fwd_from = getattr(message, "forward_from", None)
         if fwd_from is not None:
             user_id = fwd_from.id
 
-    # ── Отправитель всё ещё неизвестен ────────────────────────────────────────
     if user_id is None:
         await message.answer(
             "Не удалось определить отправителя (приватная пересылка)."

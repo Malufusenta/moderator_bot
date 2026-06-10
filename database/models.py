@@ -22,8 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
     message_count   INTEGER NOT NULL DEFAULT 0,
     first_message_at INTEGER,           -- UTC unix-ts первого замеченного сообщения
     last_message_at  INTEGER,           -- UTC unix-ts последнего сообщения
-    ad_attempts     INTEGER NOT NULL DEFAULT 0,
-    added_by        INTEGER             -- user_id того, кто добавил; NULL = сам вступил
+    ad_attempts         INTEGER NOT NULL DEFAULT 0,
+    last_ad_attempt_at  INTEGER,            -- UTC unix-ts последнего нарушения
+    added_by            INTEGER             -- user_id того, кто добавил; NULL = сам вступил
 );
 """
 

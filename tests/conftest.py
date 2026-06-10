@@ -11,6 +11,7 @@ os.environ.setdefault("ADMIN_IDS",  "")
 os.environ.setdefault("WHITELIST_IDS", "")
 # ── Пороги (изолируем тесты от .env — значения должны быть предсказуемы) ──────
 os.environ.setdefault("TRUST_LIMIT",          "30")
+os.environ.setdefault("NEWCOMER_DAYS",        "30")
 os.environ.setdefault("RECENCY_DAYS",         "60")
 os.environ.setdefault("RECENCY_MIN_MESSAGES", "1")
 os.environ.setdefault("SIMILARITY_THRESHOLD", "0.85")

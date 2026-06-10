@@ -43,6 +43,8 @@ WHITELIST_IDS: list[int] = _parse_id_list(os.getenv("WHITELIST_IDS", ""))
 TRUST_LIMIT: int = int(os.getenv("TRUST_LIMIT", "30"))
 RECENCY_DAYS: int = int(os.getenv("RECENCY_DAYS", "60"))
 RECENCY_MIN_MESSAGES: int = int(os.getenv("RECENCY_MIN_MESSAGES", "1"))
+# Стаж в днях, ниже которого участник считается «Новичком» в досье (display only)
+NEWCOMER_DAYS: int = int(os.getenv("NEWCOMER_DAYS", "30"))
 SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
 
 MUTE_HOURS: int = int(os.getenv("MUTE_HOURS", "24"))
@@ -58,6 +60,14 @@ DRY_RUN: bool = os.getenv("DRY_RUN", "false").lower() in ("1", "true", "yes")
 # ─── БД ───────────────────────────────────────────────────────────────────────
 
 DB_PATH: str = os.getenv("DB_PATH", "data/bot.db")
+
+# Человекочитаемые имена инвайт-ссылок для досье (раздел 9 ТЗ).
+# Ключ — точный URL ссылки (https://t.me/+XXXX), значение — отображаемое имя.
+# Владелец заполняет реальными URL перед деплоем.
+INVITE_LINKS: dict[str, str] = {
+    # "https://t.me/+ВПИШИ_URL_ПАРСЕРА": "парсер",
+    # "https://t.me/+ВПИШИ_URL_ЛОББИ": "Лобби",
+}
 
 # Создать папку для БД, если её ещё нет
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)

@@ -130,7 +130,7 @@ async def handle_post(messages: list[Message], bot: Bot) -> None:
             f"{mention}, публикация объявлений доступна только активным участникам. "
             f"Вы переведены в режим чтения на {hours} часа."
         )
-        await queries.increment_ad_attempts(conn, user_id, username)
+        await queries.increment_ad_attempts(conn, user_id, username, now_ts)
         if config.DRY_RUN:
             logger.info(
                 "[DRY_RUN] user_id=%d причина=недоверенный действие=delete+mute+warn текст=%r",
@@ -151,7 +151,7 @@ async def handle_post(messages: list[Message], bot: Bot) -> None:
             f"{mention}, повторная публикация того же объявления запрещена. "
             f"Вы переведены в режим чтения на {hours} часа."
         )
-        await queries.increment_ad_attempts(conn, user_id, username)
+        await queries.increment_ad_attempts(conn, user_id, username, now_ts)
         if config.DRY_RUN:
             logger.info(
                 "[DRY_RUN] user_id=%d причина=дубль действие=delete+mute+warn текст=%r",

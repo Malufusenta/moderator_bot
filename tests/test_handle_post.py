@@ -63,6 +63,7 @@ async def test_newbie_ad_deleted_and_muted(tmp_db, fake_bot):
     assert row is not None,            "Запись пользователя должна быть создана"
     assert row["ad_attempts"]    == 1, "ad_attempts должен быть 1"
     assert row["message_count"]  == 0, "message_count НЕ должен расти (удалённое ≠ активность)"
+    assert row["last_ad_attempt_at"] is not None, "last_ad_attempt_at должен быть проставлен"
 
     ads = await queries.get_user_ads(tmp_db, 1001)
     assert ads == [],                  "advertisements НЕ должны создаваться"

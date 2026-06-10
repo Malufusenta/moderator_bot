@@ -118,31 +118,26 @@ async def increment_ad_attempts(
     conn: aiosqlite.Connection,
     user_id: int,
     username: str | None = None,
+    now_ts: int | None = None,
 ) -> None:
     """Атомарный UPSERT: инкрементировать ad_attempts, создав строку если нужно.
 
-    Почему UPSERT, а не UPDATE:
-      В редком, но возможном сценарии бот впервые видит пользователя именно
-      через его объявление (parser не запускался, сообщений не было до этого
-      момента в активной сессии бота). Чистый UPDATE в таком случае просто
-      не найдёт строку и молча ничего не сделает — нарушение не попадёт в досье.
-      UPSERT создаёт запись с ad_attempts=1 и message_count=0 (DEFAULT).
+    now_ts передаётся из хендлера и записывается в last_ad_attempt_at —
+    позволяет показывать дату последнего нарушения в досье.
 
-    ВАЖНО: NOT NULL DEFAULT 0 у message_count в DDL (models.py) позволяет
-      вставить строку без явного message_count — значение берётся из DEFAULT.
-      first_message_at / last_message_at не указываются — остаются NULL.
-      message_count НЕ трогается при конфликте: удалённое объявление не должно
-      засчитываться как «активность» и копить доверие (раздел 6.3 ТЗ).
+    message_count НЕ трогается: удалённое объявление не должно
+    засчитываться как «активность» и копить доверие (раздел 6.3 ТЗ).
     """
     await conn.execute(
         """
-        INSERT INTO users (user_id, username, ad_attempts)
-        VALUES (?, ?, 1)
+        INSERT INTO users (user_id, username, ad_attempts, last_ad_attempt_at)
+        VALUES (?, ?, 1, ?)
         ON CONFLICT(user_id) DO UPDATE SET
-            ad_attempts = ad_attempts + 1,
-            username    = COALESCE(excluded.username, users.username)
+            ad_attempts        = ad_attempts + 1,
+            username           = COALESCE(excluded.username, users.username),
+            last_ad_attempt_at = excluded.last_ad_attempt_at
         """,
-        (user_id, username),
+        (user_id, username, now_ts),
     )
     await conn.commit()
 
@@ -276,6 +271,7 @@ async def get_user_profile(
             u.first_message_at,
             u.last_message_at,
             u.ad_attempts,
+            u.last_ad_attempt_at,
             u.added_by,
             COUNT(m.id) AS messages_last_period
         FROM users u
