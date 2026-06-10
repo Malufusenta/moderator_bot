@@ -79,7 +79,7 @@ def _fmt_ts(ts: int | None) -> str:
     if ts is None:
         return "Нет данных"
     dt = datetime.fromtimestamp(ts, tz=_TZ_VN)
-    return dt.strftime("%d.%m.%Y %H:%M (UTC+7)")
+    return dt.strftime("%d.%m.%Y %H:%M")
 
 
 def _determine_status(profile: dict, now_ts: int) -> str:
