@@ -18,6 +18,7 @@ os.environ.setdefault("SIMILARITY_THRESHOLD", "0.85")
 os.environ.setdefault("MUTE_HOURS",           "24")
 os.environ.setdefault("WARNING_DELETE_SECONDS", "15")
 os.environ.setdefault("DRY_RUN",              "false")
+os.environ.setdefault("LOG_CHAT_ID",          "0")
 
 from unittest.mock import MagicMock
 
@@ -31,6 +32,8 @@ import utils.scheduler as scheduler_module
 # ─── Константы, удобные в тестах ──────────────────────────────────────────────
 
 TEST_CHAT_ID: int = int(os.environ["CHAT_ID"])
+# ID тестового лог-чата; используется в fake_bot_with_log
+TEST_LOG_CHAT_ID: int = -9_999_999
 DAY: int = 86_400  # секунд в сутках
 
 
@@ -114,24 +117,27 @@ class FakeBot:
 
     mute_raises=True: restrict_chat_member бросит TelegramBadRequest,
     имитируя ситуацию «нарушитель — администратор чата» (раздел 8 ТЗ).
+
+    log_chat_id: если задан, send_message на этот chat_id идёт в self.log_sent
+    вместо self.sent — позволяет тестировать admin-лог отдельно от warn.
     """
 
-    def __init__(self, *, mute_raises: bool = False):
+    def __init__(self, *, mute_raises: bool = False, log_chat_id: int = 0):
         self.deleted:    list[int] = []   # message_id каждого вызова delete_message
         self.restricted: list[int] = []   # user_id каждого успешного restrict
-        self.sent:       list[str] = []   # текст каждого send_message
+        self.sent:       list[str] = []   # текст warn/ответов (не лог-чат)
+        self.log_sent:   list[str] = []   # текст сообщений в лог-чат
         self.mute_raises = mute_raises
+        self._log_chat_id = log_chat_id
 
     # ── API методы ────────────────────────────────────────────────────────────
 
     async def delete_message(self, chat_id: int, message_id: int) -> None:
-        # handle_post: await bot.delete_message(chat_id, m.message_id)  (позиционно)
         self.deleted.append(message_id)
 
     async def restrict_chat_member(
         self, chat_id=None, user_id=None, permissions=None, until_date=None, **kw
     ) -> None:
-        # actions.mute_user: await bot.restrict_chat_member(chat_id=…, user_id=…, …)
         if self.mute_raises:
             raise TelegramBadRequest(
                 MagicMock(), "Bad Request: can't restrict chat administrator"
@@ -139,8 +145,10 @@ class FakeBot:
         self.restricted.append(user_id)
 
     async def send_message(self, chat_id=None, text=None, **kw) -> _SentMsg:
-        # actions.warn: await bot.send_message(chat_id=…, text=…)
-        self.sent.append(text)
+        if self._log_chat_id and chat_id == self._log_chat_id:
+            self.log_sent.append(text)
+        else:
+            self.sent.append(text)
         return _SentMsg()
 
 
@@ -148,23 +156,13 @@ class FakeBot:
 
 @pytest.fixture(autouse=True)
 def no_scheduler(monkeypatch):
-    """schedule_delete → no-op.
-
-    Без этой замены тест запустит asyncio.sleep(WARNING_DELETE_SECONDS=15) и
-    будет висеть 15 секунд. Логику автоудаления предупреждений тестируем
-    отдельно, если нужно; здесь она не в фокусе.
-    """
+    """schedule_delete → no-op."""
     monkeypatch.setattr(scheduler_module, "schedule_delete", lambda *a, **kw: None)
 
 
 @pytest.fixture
 async def tmp_db(monkeypatch, tmp_path):
-    """Изолированная SQLite БД во временном файле.
-
-    Монкейпатчит config.DB_PATH, вызывает init_db() и возвращает соединение.
-    После теста вызывает close_db() — сбрасывает модульный _conn в None,
-    чтобы следующий тест получил чистое соединение к своей БД.
-    """
+    """Изолированная SQLite БД во временном файле."""
     db_file = tmp_path / "test.db"
     monkeypatch.setattr(config, "DB_PATH", str(db_file))
     await db_module.init_db()
@@ -183,11 +181,22 @@ def fake_bot_mute_fails() -> FakeBot:
 
 
 @pytest.fixture
-def reset_albums(monkeypatch):
-    """Сбросить модульное состояние сборщика альбомов между тестами.
+def fake_bot_with_log(monkeypatch) -> FakeBot:
+    """FakeBot с включённым лог-чатом (LOG_CHAT_ID = TEST_LOG_CHAT_ID)."""
+    monkeypatch.setattr(config, "LOG_CHAT_ID", TEST_LOG_CHAT_ID)
+    return FakeBot(log_chat_id=TEST_LOG_CHAT_ID)
 
-    monkeypatch.setattr восстановит оригинальные значения после теста.
-    """
+
+@pytest.fixture
+def fake_bot_mute_fails_with_log(monkeypatch) -> FakeBot:
+    """FakeBot: мут падает + лог-чат включён."""
+    monkeypatch.setattr(config, "LOG_CHAT_ID", TEST_LOG_CHAT_ID)
+    return FakeBot(mute_raises=True, log_chat_id=TEST_LOG_CHAT_ID)
+
+
+@pytest.fixture
+def reset_albums(monkeypatch):
+    """Сбросить модульное состояние сборщика альбомов между тестами."""
     import handlers.messages as m
     monkeypatch.setattr(m, "_albums",              {})
     monkeypatch.setattr(m, "_album_bots",          {})

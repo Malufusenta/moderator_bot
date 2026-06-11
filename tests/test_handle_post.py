@@ -18,7 +18,7 @@ import config
 from database import queries
 from handlers.messages import handle_post
 from moderation.duplicates import save_if_new
-from tests.conftest import DAY, FakeMessage
+from tests.conftest import DAY, FakeMessage, TEST_LOG_CHAT_ID
 
 # ─── Вспомогательная функция засева БД ────────────────────────────────────────
 
@@ -295,3 +295,92 @@ async def test_dry_run_no_actions_but_db_written(tmp_db, fake_bot, monkeypatch, 
     assert dry_records, "В логе должна быть хотя бы одна запись [DRY_RUN]"
     assert "1007" in dry_records[0].message, "user_id должен быть в лог-записи"
     assert "недоверенный" in dry_records[0].message, "причина должна быть в лог-записи"
+
+
+# ─── Тесты admin-лога ─────────────────────────────────────────────────────────
+
+async def test_log_untrusted_sends_to_log_chat(tmp_db, fake_bot_with_log):
+    """T-LOG1: новичок постит объявление → лог уходит в LOG_CHAT_ID."""
+    msg = FakeMessage(
+        user_id=2001, username="spammer",
+        photo=True, caption="Продам велосипед", message_id=100,
+    )
+    await handle_post([msg], fake_bot_with_log)
+
+    assert len(fake_bot_with_log.log_sent) == 1, "Должно быть одно лог-сообщение"
+    log_text = fake_bot_with_log.log_sent[0]
+    assert "2001" in log_text,          "user_id должен быть в логе"
+    assert "недоверенный" in log_text,  "причина должна быть в логе"
+    assert "🔇" in log_text,            "Эмодзи мута должен быть в логе"
+    # warn-сообщение уходит в чат, не в лог
+    assert len(fake_bot_with_log.sent) == 1
+
+
+async def test_log_duplicate_sends_to_log_chat(tmp_db, fake_bot_with_log):
+    """T-LOG2: доверенный постит дубль → лог с пометкой «дубль»."""
+    await seed_user(tmp_db, 2002, message_count=40, last_active_days_ago=5)
+    await save_if_new(2002, "Продам диван", int(time.time()))
+
+    msg = FakeMessage(
+        user_id=2002, username="trusted_dup",
+        photo=True, caption="Продам диван", message_id=101,
+    )
+    await handle_post([msg], fake_bot_with_log)
+
+    assert len(fake_bot_with_log.log_sent) == 1
+    log_text = fake_bot_with_log.log_sent[0]
+    assert "2002" in log_text
+    assert "дубль" in log_text
+    assert "🔁" in log_text
+
+
+async def test_log_disabled_when_log_chat_id_zero(tmp_db, fake_bot):
+    """T-LOG3: LOG_CHAT_ID=0 (дефолт) → log_action ничего не шлёт."""
+    # fake_bot создан без log_chat_id — LOG_CHAT_ID остаётся 0 из conftest setdefault
+    msg = FakeMessage(
+        user_id=2003,
+        photo=True, caption="Продам велосипед", message_id=102,
+    )
+    await handle_post([msg], fake_bot)
+
+    assert fake_bot.log_sent == [], "При LOG_CHAT_ID=0 лог-сообщений быть не должно"
+    assert len(fake_bot.sent) == 1, "warn в чат должен уйти как обычно"
+
+
+async def test_log_dry_run_has_prefix_no_actions(tmp_db, fake_bot_with_log, monkeypatch):
+    """T-LOG4: DRY_RUN + LOG_CHAT_ID задан → лог с [DRY-RUN], delete/mute/warn не вызывались."""
+    monkeypatch.setattr(config, "DRY_RUN", True)
+
+    msg = FakeMessage(
+        user_id=2004, username="dryspammer",
+        photo=True, caption="Продам велосипед", message_id=103,
+    )
+    await handle_post([msg], fake_bot_with_log)
+
+    # Карательных действий нет
+    assert fake_bot_with_log.deleted    == []
+    assert fake_bot_with_log.restricted == []
+    assert fake_bot_with_log.sent       == [], "warn не должен уйти в DRY_RUN"
+
+    # Лог с пометкой
+    assert len(fake_bot_with_log.log_sent) == 1
+    log_text = fake_bot_with_log.log_sent[0]
+    assert "[DRY-RUN]" in log_text
+    assert "2004" in log_text
+    assert "недоверенный" in log_text
+
+
+async def test_log_mute_failure_logged(tmp_db, fake_bot_mute_fails_with_log):
+    """T-LOG5: мут упал (нарушитель — админ) → в лог уходит «⚠️ Не удалось замьютить»."""
+    msg = FakeMessage(
+        user_id=2005, username="adminspammer",
+        photo=True, caption="Продам велосипед", message_id=104,
+    )
+    await handle_post([msg], fake_bot_mute_fails_with_log)
+
+    assert fake_bot_mute_fails_with_log.deleted == [104]
+    assert len(fake_bot_mute_fails_with_log.log_sent) == 1
+    log_text = fake_bot_mute_fails_with_log.log_sent[0]
+    assert "⚠️" in log_text
+    assert "замьютить" in log_text
+    assert "2005" in log_text

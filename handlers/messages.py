@@ -25,6 +25,7 @@ import asyncio
 import html
 import logging
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from aiogram import Bot, F, Router
@@ -36,6 +37,7 @@ from database import queries
 from database.db import get_db
 from handlers import actions
 from moderation import detector, duplicates, trust
+from utils.admin_log import log_action
 
 if TYPE_CHECKING:
     pass
@@ -64,6 +66,14 @@ def _mention(user: User) -> str:
     if user.username:
         return f"@{user.username}"
     return html.escape(user.full_name)
+
+
+def _fmt_utc(ts: int) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+
+
+def _snippet(text: str, limit: int = 150) -> str:
+    return text[:limit] + ("…" if len(text) > limit else "")
 
 
 async def _delete_messages(bot: Bot, chat_id: int, messages: list[Message]) -> None:
@@ -131,15 +141,41 @@ async def handle_post(messages: list[Message], bot: Bot) -> None:
             f"Вы переведены в режим чтения на {hours} часа."
         )
         await queries.increment_ad_attempts(conn, user_id, username, now_ts)
+        actor = f"@{username}" if username else user.full_name
+        actor_display = f"{actor} (ID: {user_id})"
+        snip     = _snippet(combined_text)
+        time_str = _fmt_utc(now_ts)
         if config.DRY_RUN:
             logger.info(
                 "[DRY_RUN] user_id=%d причина=недоверенный действие=delete+mute+warn текст=%r",
                 user_id, warn_text,
             )
+            await log_action(bot,
+                f"🧪 [DRY-RUN] 🔇 БЫ замьютил (недоверенный)\n"
+                f"👤 {actor_display}\n"
+                f"📝 объявление от недоверенного\n"
+                f"✉️ {snip}\n"
+                f"🕐 {time_str}"
+            )
         else:
             await _delete_messages(bot, chat_id, messages)
-            await actions.mute_user(bot, chat_id, user_id, hours)
+            muted = await actions.mute_user(bot, chat_id, user_id, hours)
             await actions.warn(bot, chat_id, warn_text, config.WARNING_DELETE_SECONDS)
+            if muted:
+                await log_action(bot,
+                    f"🔇 Мут (недоверенный)\n"
+                    f"👤 {actor_display}\n"
+                    f"📝 объявление от недоверенного\n"
+                    f"✉️ {snip}\n"
+                    f"🕐 {time_str}"
+                )
+            else:
+                await log_action(bot,
+                    f"⚠️ Не удалось замьютить\n"
+                    f"👤 {actor_display}\n"
+                    f"📝 нет прав или цель — админ\n"
+                    f"🕐 {time_str}"
+                )
         # Не записываем: удалённое/заблокированное объявление не считается активностью
         return
 
@@ -152,15 +188,41 @@ async def handle_post(messages: list[Message], bot: Bot) -> None:
             f"Вы переведены в режим чтения на {hours} часа."
         )
         await queries.increment_ad_attempts(conn, user_id, username, now_ts)
+        actor = f"@{username}" if username else user.full_name
+        actor_display = f"{actor} (ID: {user_id})"
+        snip     = _snippet(combined_text)
+        time_str = _fmt_utc(now_ts)
         if config.DRY_RUN:
             logger.info(
                 "[DRY_RUN] user_id=%d причина=дубль действие=delete+mute+warn текст=%r",
                 user_id, warn_text,
             )
+            await log_action(bot,
+                f"🧪 [DRY-RUN] 🔁 БЫ замьютил (дубль)\n"
+                f"👤 {actor_display}\n"
+                f"📝 повторная публикация\n"
+                f"✉️ {snip}\n"
+                f"🕐 {time_str}"
+            )
         else:
             await _delete_messages(bot, chat_id, messages)
-            await actions.mute_user(bot, chat_id, user_id, hours)
+            muted = await actions.mute_user(bot, chat_id, user_id, hours)
             await actions.warn(bot, chat_id, warn_text, config.WARNING_DELETE_SECONDS)
+            if muted:
+                await log_action(bot,
+                    f"🔁 Мут (дубль)\n"
+                    f"👤 {actor_display}\n"
+                    f"📝 повторная публикация\n"
+                    f"✉️ {snip}\n"
+                    f"🕐 {time_str}"
+                )
+            else:
+                await log_action(bot,
+                    f"⚠️ Не удалось замьютить\n"
+                    f"👤 {actor_display}\n"
+                    f"📝 нет прав или цель — админ\n"
+                    f"🕐 {time_str}"
+                )
         # Не записываем и не save_if_new: нарушение, не пост
         return
 

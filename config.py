@@ -50,6 +50,9 @@ SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
 MUTE_HOURS: int = int(os.getenv("MUTE_HOURS", "24"))
 WARNING_DELETE_SECONDS: int = int(os.getenv("WARNING_DELETE_SECONDS", "15"))
 
+# ID чата/канала для лога модераторских действий. 0 = логирование выключено.
+LOG_CHAT_ID: int = int(os.getenv("LOG_CHAT_ID", "0"))
+
 # ─── Режим наблюдения ─────────────────────────────────────────────────────────
 
 # Если True — бот НЕ удаляет сообщения, НЕ мутит, НЕ предупреждает.
