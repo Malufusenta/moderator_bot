@@ -56,17 +56,23 @@ def _build_stop_pattern(words: list[str]) -> re.Pattern[str]:
     return re.compile(pattern, re.IGNORECASE | re.UNICODE)
 
 
-# Compile once at import time — не создавать на каждое сообщение
-_STOP_PATTERN: re.Pattern[str] = _build_stop_pattern(config.STOP_WORDS)
+def _build_collapsed(words: list[str]) -> list[str]:
+    return [
+        collapsed
+        for w in words
+        if len(collapsed := re.sub(r"[^а-яёa-z]", "", w.lower())) >= 4
+    ]
 
-# Collapsed версии стоп-слов — для прохода 2 (anti-collapse)
-# Только слова длиной >= 4 буквы после схлопывания, чтобы избежать
-# коротких совпадений ("ам", "ру" и т.п.) — TODO: тюнить при необходимости
-_COLLAPSED_STOP_WORDS: list[str] = [
-    collapsed
-    for w in config.STOP_WORDS
-    if len(collapsed := re.sub(r"[^а-яёa-z]", "", w.lower())) >= 4
-]
+
+# Compile once at import time — не создавать на каждое сообщение
+_STOP_PATTERN_MEDIA: re.Pattern[str] = _build_stop_pattern(config.STOP_WORDS_MEDIA)
+_STOP_PATTERN_TEXT:  re.Pattern[str] = _build_stop_pattern(config.STOP_WORDS_TEXT)
+_COLLAPSED_MEDIA: list[str] = _build_collapsed(config.STOP_WORDS_MEDIA)
+_COLLAPSED_TEXT:  list[str] = _build_collapsed(config.STOP_WORDS_TEXT)
+
+# Backward-compat: объединённый паттерн (используется в contains_stopword)
+_STOP_PATTERN: re.Pattern[str] = _build_stop_pattern(config.STOP_WORDS)
+_COLLAPSED_STOP_WORDS: list[str] = _build_collapsed(config.STOP_WORDS)
 
 
 # ─── Публичные функции ────────────────────────────────────────────────────────
@@ -95,30 +101,27 @@ def has_media(message) -> bool:
     )
 
 
-def contains_stopword(text: str) -> bool:
-    """Проверить наличие стоп-слова в тексте двумя проходами.
-
-    Публичная функция — используется в handlers/messages.py для проверки
-    объединённого текста всего альбома (caption всех сообщений).
-
-    Проход 1: deobfuscate + regex с \\b — основной.
-    Проход 2: collapse + substring — ловит расклеенные слова.
-    """
-    # Проход 1: деобфускация гомоглифов + поиск по \b-границам
+def _check(text: str, pattern: re.Pattern[str], collapsed_words: list[str]) -> bool:
     clean = deobfuscate(text)
-    if _STOP_PATTERN.search(clean):
+    if pattern.search(clean):
         return True
-
-    # Проход 2: схлопнуть все пробелы/пунктуацию, искать подстроку
-    # Ловит: "п р о д а м" → "продам", "про-дам" → "продам"
-    # TODO: при необходимости добавить минимальный порог длины совпадения
-    #   или список исключений (false-positive: "снятьё", "продамся" и т.п.)
     collapsed_text = collapse(clean)
-    for stop in _COLLAPSED_STOP_WORDS:
-        if stop in collapsed_text:
-            return True
+    return any(stop in collapsed_text for stop in collapsed_words)
 
-    return False
+
+def contains_stopword_media(text: str) -> bool:
+    """Стоп-слово из группы «требует медиа» (продам, аренда…)."""
+    return _check(text, _STOP_PATTERN_MEDIA, _COLLAPSED_MEDIA)
+
+
+def contains_stopword_text(text: str) -> bool:
+    """Стоп-слово из группы «без медиа» (сдам, пересдам…)."""
+    return _check(text, _STOP_PATTERN_TEXT, _COLLAPSED_TEXT)
+
+
+def contains_stopword(text: str) -> bool:
+    """Любое стоп-слово (объединение обоих групп)."""
+    return _check(text, _STOP_PATTERN, _COLLAPSED_STOP_WORDS)
 
 
 def is_advertisement(message) -> bool:

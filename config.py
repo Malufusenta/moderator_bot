@@ -76,22 +76,38 @@ INVITE_LINKS: dict[str, str] = {
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 # ─── Стоп-слова (раздел 6.2 ТЗ) ──────────────────────────────────────────────
-# Можно переопределить через STOP_WORDS в .env (через запятую).
-# По умолчанию — базовый набор ключевых форм.
+# STOP_WORDS_MEDIA — требуют медиа (фото/видео) в сообщении.
+# STOP_WORDS_TEXT  — срабатывают на любой текст, без медиа.
+# Переопределяются через STOP_WORDS_MEDIA / STOP_WORDS_TEXT в .env.
 
-_STOP_WORDS_ENV = os.getenv("STOP_WORDS", "")
-
-STOP_WORDS: list[str] = _parse_stop_words(_STOP_WORDS_ENV) if _STOP_WORDS_ENV else [
+_SW_MEDIA_ENV = os.getenv("STOP_WORDS_MEDIA", "")
+STOP_WORDS_MEDIA: list[str] = _parse_stop_words(_SW_MEDIA_ENV) if _SW_MEDIA_ENV else [
     "продам",
     "продаю",
-    "продаётся",
     "продается",
+    "продаются",
+    "продаётся",
     "продаëтся",   # ё через е-краткое (гомоглиф)
+    "к продаже",
+    "аренда",
+    "в аренду",
+]
+
+_SW_TEXT_ENV = os.getenv("STOP_WORDS_TEXT", "")
+STOP_WORDS_TEXT: list[str] = _parse_stop_words(_SW_TEXT_ENV) if _SW_TEXT_ENV else [
     "сдам",
     "сдаю",
-    "аренда",
-    "к продаже",
-    "в аренду",
-    "снять",
-    "сниму",
+    "сдается",
+    "сдаётся",
+    "пересдам",
+    "пересдаю",
+    "пересдается",
+    "пересдаётся",
 ]
+
+# Объединённый список — для обратной совместимости и env-оверрайда STOP_WORDS.
+_SW_LEGACY_ENV = os.getenv("STOP_WORDS", "")
+STOP_WORDS: list[str] = (
+    _parse_stop_words(_SW_LEGACY_ENV) if _SW_LEGACY_ENV
+    else STOP_WORDS_MEDIA + STOP_WORDS_TEXT
+)

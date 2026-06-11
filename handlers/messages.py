@@ -114,7 +114,10 @@ async def handle_post(messages: list[Message], bot: Bot) -> None:
         m.photo or m.video or m.animation for m in messages
     )
     combined_text = " ".join(detector.get_combined_text(m) for m in messages)
-    is_ad = media_present and detector.contains_stopword(combined_text)
+    is_ad = (
+        (media_present and detector.contains_stopword_media(combined_text))
+        or detector.contains_stopword_text(combined_text)
+    )
 
     # ── Шаг 1: не объявление — учитываем активность и выходим ────────────────
     if not is_ad:

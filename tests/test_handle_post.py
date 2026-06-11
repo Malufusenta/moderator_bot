@@ -384,3 +384,49 @@ async def test_log_mute_failure_logged(tmp_db, fake_bot_mute_fails_with_log):
     assert "⚠️" in log_text
     assert "замьютить" in log_text
     assert "2005" in log_text
+
+
+# ─── Разделение стоп-слов: с медиа / без медиа ────────────────────────────────
+
+async def test_media_word_without_media_is_ignored(tmp_db, fake_bot):
+    """Слово «продам» (группа MEDIA) без медиа → не объявление, считается активностью."""
+    msg = FakeMessage(
+        user_id=3001, username="user3001",
+        text="Продам диван",
+    )
+    await handle_post([msg], fake_bot)
+    assert fake_bot.deleted == []
+    assert fake_bot.restricted == []
+    assert fake_bot.sent == []
+
+
+async def test_media_word_with_media_is_ad(tmp_db, fake_bot):
+    """Слово «продам» (группа MEDIA) + медиа → объявление → удалено + мут/warn."""
+    msg = FakeMessage(
+        user_id=3002, username="user3002",
+        photo=True, caption="Продам диван", message_id=200,
+    )
+    await handle_post([msg], fake_bot)
+    assert fake_bot.deleted == [200]
+    assert fake_bot.restricted != [] or fake_bot.sent != []
+
+
+async def test_text_word_without_media_is_ad(tmp_db, fake_bot):
+    """Слово «сдаётся» (группа TEXT) без медиа → объявление."""
+    msg = FakeMessage(
+        user_id=3003, username="user3003",
+        text="Сдаётся комната в районе Митино",
+    )
+    await handle_post([msg], fake_bot)
+    # недоверенный → мут или warn
+    assert fake_bot.restricted != [] or fake_bot.sent != []
+
+
+async def test_peresd_word_without_media_is_ad(tmp_db, fake_bot):
+    """Слово «пересдаю» (группа TEXT) без медиа → объявление."""
+    msg = FakeMessage(
+        user_id=3004, username="user3004",
+        text="Пересдаю квартиру, срочно",
+    )
+    await handle_post([msg], fake_bot)
+    assert fake_bot.restricted != [] or fake_bot.sent != []
