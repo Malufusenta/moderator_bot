@@ -11,7 +11,7 @@ import pytest
 import config
 from database import queries
 from handlers.admin import _format_added_by, _format_dossier
-from handlers.members import on_member_leave
+from handlers.members import on_member_join, on_member_leave
 
 # ─── Вспомогательное ─────────────────────────────────────────────────────────
 
@@ -181,6 +181,62 @@ def test_dossier_no_join_data_line():
     profile = _base_profile(added_by=None, invite_link=None)
     text = _format_dossier(profile, now)
     assert "🔗 Добавил / вступил сам: Нет данных" in text
+
+
+# ─── on_member_join: лог при вступлении ──────────────────────────────────────
+
+def _make_join_event(
+    user_id: int,
+    username: str | None,
+    invite_link: str | None = None,
+    added_by_id: int | None = None,
+) -> MagicMock:
+    """Минимальный фейк ChatMemberUpdated для события вступления."""
+    user = MagicMock()
+    user.id = user_id
+    user.username = username
+
+    actor = MagicMock()
+    actor.id = added_by_id if added_by_id else user_id  # сам вступил если совпадает
+
+    event = MagicMock()
+    event.new_chat_member.user = user
+    event.from_user = actor
+    event.date.replace.return_value.timestamp.return_value = 1_700_000_000
+
+    if invite_link:
+        event.invite_link = MagicMock()
+        event.invite_link.invite_link = invite_link
+    else:
+        event.invite_link = None
+
+    return event
+
+
+async def test_join_sends_log_with_invite_link(tmp_db, fake_bot_with_log, monkeypatch):
+    monkeypatch.setattr(config, "INVITE_LINKS", {"https://t.me/+abc123": "Лобби"})
+    event = _make_join_event(4001, "newbie", invite_link="https://t.me/+abc123")
+    await on_member_join(event, fake_bot_with_log)
+    assert len(fake_bot_with_log.log_sent) == 1
+    msg = fake_bot_with_log.log_sent[0]
+    assert "👋 Вступил в чат" in msg
+    assert "@newbie" in msg
+    assert "Лобби" in msg
+
+
+async def test_join_sends_log_self_join_no_link(tmp_db, fake_bot_with_log):
+    event = _make_join_event(4002, "solo")
+    await on_member_join(event, fake_bot_with_log)
+    assert len(fake_bot_with_log.log_sent) == 1
+    msg = fake_bot_with_log.log_sent[0]
+    assert "👋 Вступил в чат" in msg
+    assert "самостоятельно" in msg
+
+
+async def test_join_no_log_when_log_chat_disabled(tmp_db, fake_bot):
+    event = _make_join_event(4003, "ghost")
+    await on_member_join(event, fake_bot)
+    assert fake_bot.log_sent == []
 
 
 # ─── on_member_leave: лог при выходе ─────────────────────────────────────────

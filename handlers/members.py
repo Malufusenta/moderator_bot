@@ -40,8 +40,8 @@ router = Router()
     ChatMemberUpdatedFilter(member_status_changed=JOIN_TRANSITION),
     F.chat.id == config.CHAT_ID,
 )
-async def on_member_join(event: ChatMemberUpdated) -> None:
-    """Зафиксировать нового участника чата."""
+async def on_member_join(event: ChatMemberUpdated, bot: Bot) -> None:
+    """Зафиксировать нового участника чата и отправить лог."""
     joined_user = event.new_chat_member.user
     actor       = event.from_user
 
@@ -69,16 +69,30 @@ async def on_member_join(event: ChatMemberUpdated) -> None:
         added_by=added_by,
     )
 
+    user_line = f"@{username} (ID: {user_id})" if username else f"ID: {user_id}"
+
     if added_by is not None:
+        source = f"добавил ID: {added_by}"
         logger.info(
             "Новый участник user_id=%d (@%s) добавлен пользователем %d",
             user_id, username, added_by,
         )
-    else:
+    elif invite_link:
+        from handlers.admin import _resolve_invite_link_name
+        name = _resolve_invite_link_name(invite_link)
+        source = name if name else "по ссылке"
         logger.info(
             "Новый участник user_id=%d (@%s) вступил самостоятельно (ссылка: %s)",
             user_id, username, invite_link,
         )
+    else:
+        source = "самостоятельно"
+        logger.info(
+            "Новый участник user_id=%d (@%s) вступил самостоятельно",
+            user_id, username,
+        )
+
+    await log_action(bot, f"👋 Вступил в чат\n👤 {user_line}\n🔗 {source}")
 
 
 @router.chat_member(
