@@ -18,12 +18,18 @@ import logging
 from datetime import timezone
 
 from aiogram import F, Router
-from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION
+from aiogram import Bot
+from aiogram.filters.chat_member_updated import (
+    ChatMemberUpdatedFilter,
+    JOIN_TRANSITION,
+    LEAVE_TRANSITION,
+)
 from aiogram.types import ChatMemberUpdated
 
 import config
 from database import queries
 from database.db import get_db
+from utils.admin_log import log_action
 
 logger = logging.getLogger(__name__)
 
@@ -73,3 +79,19 @@ async def on_member_join(event: ChatMemberUpdated) -> None:
             "Новый участник user_id=%d (@%s) вступил самостоятельно (ссылка: %s)",
             user_id, username, invite_link,
         )
+
+
+@router.chat_member(
+    ChatMemberUpdatedFilter(member_status_changed=LEAVE_TRANSITION),
+    F.chat.id == config.CHAT_ID,
+)
+async def on_member_leave(event: ChatMemberUpdated, bot: Bot) -> None:
+    """Логировать выход участника в лог-чат."""
+    left_user = event.old_chat_member.user
+    user_id   = left_user.id
+    username  = left_user.username
+
+    user_line = f"@{username} (ID: {user_id})" if username else f"ID: {user_id}"
+    logger.info("Участник покинул чат user_id=%d (@%s)", user_id, username)
+
+    await log_action(bot, f"🚪 Покинул чат\n👤 {user_line}")

@@ -1,14 +1,17 @@
 """
-Тесты для record_join (database/queries.py) и отображения added_by в досье.
+Тесты для record_join (database/queries.py), отображения added_by в досье
+и логирования выхода участника.
 """
 
 import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import config
 from database import queries
 from handlers.admin import _format_added_by, _format_dossier
+from handlers.members import on_member_leave
 
 # ─── Вспомогательное ─────────────────────────────────────────────────────────
 
@@ -178,3 +181,43 @@ def test_dossier_no_join_data_line():
     profile = _base_profile(added_by=None, invite_link=None)
     text = _format_dossier(profile, now)
     assert "🔗 Добавил / вступил сам: Нет данных" in text
+
+
+# ─── on_member_leave: лог при выходе ─────────────────────────────────────────
+
+def _make_leave_event(user_id: int, username: str | None) -> MagicMock:
+    """Минимальный фейк ChatMemberUpdated для события выхода."""
+    user = MagicMock()
+    user.id = user_id
+    user.username = username
+
+    event = MagicMock()
+    event.old_chat_member.user = user
+    return event
+
+
+async def test_leave_sends_log_with_username(fake_bot_with_log):
+    event = _make_leave_event(5001, "leaver")
+    await on_member_leave(event, fake_bot_with_log)
+    assert len(fake_bot_with_log.log_sent) == 1
+    msg = fake_bot_with_log.log_sent[0]
+    assert "🚪 Покинул чат" in msg
+    assert "@leaver" in msg
+    assert "5001" in msg
+
+
+async def test_leave_sends_log_without_username(fake_bot_with_log):
+    event = _make_leave_event(5002, None)
+    await on_member_leave(event, fake_bot_with_log)
+    assert len(fake_bot_with_log.log_sent) == 1
+    msg = fake_bot_with_log.log_sent[0]
+    assert "🚪 Покинул чат" in msg
+    assert "5002" in msg
+
+
+async def test_leave_no_log_when_log_chat_disabled(fake_bot):
+    """LOG_CHAT_ID=0 → log_action молчит, ничего не отправляется."""
+    event = _make_leave_event(5003, "ghost")
+    await on_member_leave(event, fake_bot)
+    assert fake_bot.sent == []
+    assert fake_bot.log_sent == []
