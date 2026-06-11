@@ -140,6 +140,17 @@ def test_format_added_by_unknown_invite_link(monkeypatch):
     assert _format_added_by(profile, None) == "по ссылке"
 
 
+def test_format_added_by_truncated_invite_link(monkeypatch):
+    """Telegram обрезает ссылки от других админов: https://t.me/+nWEB7ZFp…
+    Должно матчиться по префиксу и вернуть имя из INVITE_LINKS.
+    """
+    full_link  = "https://t.me/+nWEB7ZFp7m0yZjAy"
+    trunc_link = "https://t.me/+nWEB7ZFp…"  # Unicode ellipsis как присылает Telegram
+    monkeypatch.setattr(config, "INVITE_LINKS", {full_link: "Парсер"})
+    profile = _base_profile(added_by=None, invite_link=trunc_link)
+    assert _format_added_by(profile, None) == "по ссылке «Парсер»"
+
+
 def test_format_added_by_no_data():
     profile = _base_profile(added_by=None, invite_link=None)
     assert _format_added_by(profile, None) == "Нет данных"

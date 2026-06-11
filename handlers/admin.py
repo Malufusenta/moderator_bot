@@ -99,6 +99,27 @@ def _is_trusted_display(profile: dict) -> str:
     return "Да" if profile["message_count"] >= config.TRUST_LIMIT else "Нет"
 
 
+def _resolve_invite_link_name(invite_link: str) -> str | None:
+    """Найти имя ссылки в config.INVITE_LINKS.
+
+    Сначала точное совпадение, затем префикс-поиск — Telegram Bot API
+    возвращает ссылки от других администраторов в усечённом виде:
+    «https://t.me/+nWEB7ZFp…» вместо полного «https://t.me/+nWEB7ZFp7m0yZjAy».
+    """
+    name = config.INVITE_LINKS.get(invite_link)
+    if name:
+        return name
+    # Отрезаем хвост (…, … или ...) и ищем, какая настроенная ссылка
+    # начинается с оставшегося префикса.
+    prefix = invite_link.rstrip(".…")
+    if len(prefix) < 15:  # слишком короткий префикс — не матчим
+        return None
+    for key, val in config.INVITE_LINKS.items():
+        if key.startswith(prefix):
+            return val
+    return None
+
+
 def _format_added_by(profile: dict, added_by_user: dict | None) -> str:
     """Сформировать строку источника появления участника.
 
@@ -114,7 +135,7 @@ def _format_added_by(profile: dict, added_by_user: dict | None) -> str:
 
     invite_link = profile.get("invite_link")
     if invite_link:
-        name = config.INVITE_LINKS.get(invite_link)
+        name = _resolve_invite_link_name(invite_link)
         if name:
             return f"по ссылке «{name}»"
         return "по ссылке"
