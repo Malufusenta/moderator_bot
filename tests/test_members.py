@@ -131,7 +131,7 @@ def test_format_added_by_added_by_user_none():
 def test_format_added_by_known_invite_link(monkeypatch):
     monkeypatch.setattr(config, "INVITE_LINKS", {"https://t.me/+abc": "Лобби"})
     profile = _base_profile(added_by=None, invite_link="https://t.me/+abc")
-    assert _format_added_by(profile, None) == "по ссылке «Лобби»"
+    assert _format_added_by(profile, None) == "Лобби"
 
 
 def test_format_added_by_unknown_invite_link(monkeypatch):
@@ -148,7 +148,7 @@ def test_format_added_by_truncated_invite_link(monkeypatch):
     trunc_link = "https://t.me/+nWEB7ZFp…"  # Unicode ellipsis как присылает Telegram
     monkeypatch.setattr(config, "INVITE_LINKS", {full_link: "Парсер"})
     profile = _base_profile(added_by=None, invite_link=trunc_link)
-    assert _format_added_by(profile, None) == "по ссылке «Парсер»"
+    assert _format_added_by(profile, None) == "Парсер"
 
 
 def test_format_added_by_no_data():
@@ -170,7 +170,7 @@ def test_dossier_invite_link_line(monkeypatch):
     now = _now()
     profile = _base_profile(added_by=None, invite_link="https://t.me/+abc")
     text = _format_dossier(profile, now)
-    assert "🔗 Добавил / вступил сам: по ссылке «Лобби»" in text
+    assert "🔗 Добавил / вступил сам: Лобби" in text
 
 
 def test_dossier_no_join_data_line():

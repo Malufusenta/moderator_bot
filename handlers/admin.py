@@ -137,7 +137,7 @@ def _format_added_by(profile: dict, added_by_user: dict | None) -> str:
     if invite_link:
         name = _resolve_invite_link_name(invite_link)
         if name:
-            return f"по ссылке «{name}»"
+            return name
         return "по ссылке"
 
     return "Нет данных"

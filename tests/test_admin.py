@@ -126,11 +126,11 @@ def test_added_by_added_by_user_none():
 
 
 def test_added_by_known_invite_link(monkeypatch):
-    """invite_link есть и распознан через INVITE_LINKS → 'по ссылке «Лобби»'."""
+    """invite_link есть и распознан через INVITE_LINKS → имя ссылки."""
     monkeypatch.setattr(config, "INVITE_LINKS", {"https://t.me/+abc": "Лобби"})
     profile = _base_profile(added_by=None, invite_link="https://t.me/+abc")
     result  = _format_added_by(profile, None)
-    assert result == "по ссылке «Лобби»"
+    assert result == "Лобби"
 
 
 def test_added_by_unknown_invite_link(monkeypatch):
