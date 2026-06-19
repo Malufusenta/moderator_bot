@@ -90,6 +90,7 @@ STOP_WORDS_MEDIA: list[str] = _parse_stop_words(_SW_MEDIA_ENV) if _SW_MEDIA_ENV 
     "продаëтся",   # ё через е-краткое (гомоглиф)
     "к продаже",
     "аренда",
+    "пересдача",
     "в аренду",
 ]
 
@@ -101,6 +102,7 @@ STOP_WORDS_TEXT: list[str] = _parse_stop_words(_SW_TEXT_ENV) if _SW_TEXT_ENV els
     "сдаётся",
     "пересдам",
     "пересдаю",
+    "пересдача",
     "пересдается",
     "пересдаётся",
 ]
