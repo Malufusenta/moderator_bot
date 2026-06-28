@@ -113,42 +113,56 @@ def aggregate_messages(messages: Iterable) -> dict[int, dict]:
 async def _collect_members(app, conn) -> int:
     """Шаг 1: загрузить всех текущих участников чата.
 
-    Использует get_chat_members() — возвращает людей независимо от того,
-    писали они что-нибудь или нет. joined_date может быть None для старых
-    участников — в этом случае пишем NULL, не перетирая существующее значение.
+    Telegram API для больших супергрупп не отдаёт полный список без поиска.
+    Обходим через поиск по символам («алфавитный трюк»): для каждого символа
+    из SEARCH_CHARS делаем get_chat_members(query=char) и собираем уникальных
+    участников по user_id. Дубли между запросами автоматически отсеиваются.
 
-    Возвращает количество обработанных участников.
+    joined_date может быть None для старых участников — пишем NULL,
+    не перетирая существующее значение (COALESCE в upsert_member).
+
+    Возвращает количество уникальных участников.
     """
     from pyrogram.errors import FloodWait
 
+    # Русский + латинский алфавит + цифры — покрывает все имена/юзернеймы
+    SEARCH_CHARS = "абвгдеёжзийклмнопрстуфхцчшщыьэюяabcdefghijklmnopqrstuvwxyz0123456789"
+
+    seen: set[int] = set()
     count = 0
-    print("[parser] Шаг 1: загрузка списка участников...")
+    print("[parser] Шаг 1: загрузка списка участников (поиск по алфавиту)...")
 
-    try:
-        async for member in app.get_chat_members(config.CHAT_ID):
-            user = member.user
-            if user is None or user.is_bot:
-                continue
+    for char in SEARCH_CHARS:
+        try:
+            async for member in app.get_chat_members(config.CHAT_ID, query=char):
+                user = member.user
+                if user is None or user.is_bot or user.id in seen:
+                    continue
 
-            joined_at: int | None = None
-            if member.joined_date is not None:
-                joined_at = int(member.joined_date.timestamp())
+                seen.add(user.id)
 
-            await queries.upsert_member(
-                conn,
-                user_id   = user.id,
-                username  = user.username,
-                joined_at = joined_at,
-            )
-            count += 1
+                joined_at: int | None = None
+                if member.joined_date is not None:
+                    joined_at = int(member.joined_date.timestamp())
 
-            if count % 100 == 0:
-                print(f"[parser]   участников: {count}...")
-                await conn.commit()
+                await queries.upsert_member(
+                    conn,
+                    user_id   = user.id,
+                    username  = user.username,
+                    joined_at = joined_at,
+                )
+                count += 1
 
-    except FloodWait as e:
-        logger.warning("[parser] FloodWait %d сек при загрузке участников.", e.value)
-        print(f"[parser] ⚠️  FloodWait {e.value} сек — частичный результат.")
+                if count % 100 == 0:
+                    print(f"[parser]   участников: {count}...")
+                    await conn.commit()
+
+            await asyncio.sleep(0.5)  # пауза между запросами
+
+        except FloodWait as e:
+            logger.warning("[parser] FloodWait %d сек (символ '%s').", e.value, char)
+            print(f"[parser]   FloodWait {e.value} сек, ждём...")
+            await asyncio.sleep(e.value)
 
     await conn.commit()
     print(f"[parser] Участников записано: {count}")
