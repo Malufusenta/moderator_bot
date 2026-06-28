@@ -237,3 +237,39 @@ async def test_save_parsed_stats_batch(tmp_db):
         row = await queries.get_user(tmp_db, uid)
         assert row is not None,            f"user {uid} not found"
         assert row["message_count"] == cnt, f"user {uid} count mismatch"
+
+
+# ─── C. queries.upsert_member ─────────────────────────────────────────────────
+
+async def test_upsert_member_creates_silent_user(tmp_db):
+    """C1: участник, ни разу не писавший, появляется в БД."""
+    await queries.upsert_member(tmp_db, user_id=301, username="lurker", joined_at=1_700_000_000)
+    await tmp_db.commit()
+    row = await queries.get_user(tmp_db, 301)
+    assert row is not None
+    assert row["username"]      == "lurker"
+    assert row["joined_at"]     == 1_700_000_000
+    assert row["message_count"] == 0
+
+
+async def test_upsert_member_does_not_overwrite_joined_at(tmp_db):
+    """C2: если joined_at уже есть, повторный upsert_member его не затирает."""
+    await queries.upsert_member(tmp_db, user_id=302, username="u", joined_at=1_700_000_000)
+    await tmp_db.commit()
+    # Второй вызов с None (участник без даты вступления из API)
+    await queries.upsert_member(tmp_db, user_id=302, username="u2", joined_at=None)
+    await tmp_db.commit()
+    row = await queries.get_user(tmp_db, 302)
+    assert row["joined_at"] == 1_700_000_000   # сохранился оригинал
+    assert row["username"]  == "u2"            # username обновился
+
+
+async def test_upsert_member_does_not_reset_message_count(tmp_db):
+    """C3: upsert_member не обнуляет счётчик сообщений."""
+    NOW = 1_700_000_000
+    await queries.save_parsed_stats(tmp_db, 303, "active", 50, NOW - 1000, NOW)
+    await tmp_db.commit()
+    await queries.upsert_member(tmp_db, user_id=303, username="active", joined_at=NOW - 9999)
+    await tmp_db.commit()
+    row = await queries.get_user(tmp_db, 303)
+    assert row["message_count"] == 50   # не сброшен

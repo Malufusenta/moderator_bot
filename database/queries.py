@@ -320,6 +320,33 @@ async def record_join(
     await conn.commit()
 
 
+# ─── парсер: список участников (раздел 5) ────────────────────────────────────
+
+async def upsert_member(
+    conn: aiosqlite.Connection,
+    user_id: int,
+    username: str | None,
+    joined_at: int | None,
+) -> None:
+    """Записать участника чата из get_chat_members().
+
+    Безопасен для повторного вызова:
+    - joined_at: пишется только если у пользователя его ещё нет (COALESCE).
+    - username:  обновляется только если новое значение не None.
+    - Данные об активности (message_count и др.) не трогаются.
+    """
+    await conn.execute(
+        """
+        INSERT INTO users (user_id, username, joined_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username  = COALESCE(excluded.username, users.username),
+            joined_at = COALESCE(users.joined_at, excluded.joined_at)
+        """,
+        (user_id, username, joined_at),
+    )
+
+
 # ─── парсер истории (раздел 5) ────────────────────────────────────────────────
 
 async def save_parsed_stats(

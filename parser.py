@@ -110,22 +110,110 @@ def aggregate_messages(messages: Iterable) -> dict[int, dict]:
 
 # ─── Точка входа ─────────────────────────────────────────────────────────────
 
-async def main() -> None:
-    """Сбор истории чата и наполнение БД.
+async def _collect_members(app, conn) -> int:
+    """Шаг 1: загрузить всех текущих участников чата.
 
-    Этапы:
-      1. init_db() — создаёт таблицы если нет (idempotent).
-      2. Подключиться user-сессией через Pyrogram.
-      3. Итерировать всю историю чата с прогресс-логом и throttle-паузами.
-         sleep_threshold=60: Pyrogram сам ждёт FloodWait ≤ 60 сек;
-         явный except FloodWait нужен только для задержек > 60 сек.
-      4. aggregate_messages() — чистая агрегация в памяти.
-      5. Записать результаты пакетом в БД; один commit на весь пакет.
-      6. close_db() в finally.
+    Использует get_chat_members() — возвращает людей независимо от того,
+    писали они что-нибудь или нет. joined_date может быть None для старых
+    участников — в этом случае пишем NULL, не перетирая существующее значение.
+
+    Возвращает количество обработанных участников.
     """
-    # Pyrogram импортируется здесь — тесты не зависят от него вообще
-    from pyrogram import Client
     from pyrogram.errors import FloodWait
+
+    count = 0
+    print("[parser] Шаг 1: загрузка списка участников...")
+
+    try:
+        async for member in app.get_chat_members(config.CHAT_ID):
+            user = member.user
+            if user is None or user.is_bot:
+                continue
+
+            joined_at: int | None = None
+            if member.joined_date is not None:
+                joined_at = int(member.joined_date.timestamp())
+
+            await queries.upsert_member(
+                conn,
+                user_id   = user.id,
+                username  = user.username,
+                joined_at = joined_at,
+            )
+            count += 1
+
+            if count % 100 == 0:
+                print(f"[parser]   участников: {count}...")
+                await conn.commit()
+
+    except FloodWait as e:
+        logger.warning("[parser] FloodWait %d сек при загрузке участников.", e.value)
+        print(f"[parser] ⚠️  FloodWait {e.value} сек — частичный результат.")
+
+    await conn.commit()
+    print(f"[parser] Участников записано: {count}")
+    return count
+
+
+async def _collect_history(app, conn) -> int:
+    """Шаг 2: пройти историю сообщений, обновить счётчики активности.
+
+    Только этот шаг обновляет message_count / first_message_at / last_message_at.
+    Участники без сообщений (загруженные в шаге 1) не затрагиваются.
+    Возвращает количество сообщений.
+    """
+    from pyrogram.errors import FloodWait
+
+    batch: list = []
+    total = 0
+
+    print("[parser] Шаг 2: сбор истории сообщений...")
+
+    try:
+        async for msg in app.get_chat_history(config.CHAT_ID):
+            batch.append(msg)
+            total += 1
+            if total % _PROGRESS_STEP == 0:
+                print(f"[parser]   сообщений: {total}...")
+                await asyncio.sleep(_THROTTLE_SLEEP)
+
+    except FloodWait as e:
+        logger.warning("[parser] FloodWait %d сек — сохраняем частичный результат.", e.value)
+        print(
+            f"[parser] ⚠️  FloodWait {e.value} сек. "
+            f"Сохраняем {total} сообщений и завершаем."
+        )
+
+    print(f"[parser] Сбор завершён: {total} сообщений. Агрегируем...")
+    stats = aggregate_messages(batch)
+    del batch
+
+    print(f"[parser] Записываем статистику для {len(stats)} пользователей...")
+    for uid, data in stats.items():
+        await queries.save_parsed_stats(
+            conn,
+            user_id          = uid,
+            username         = data["username"],
+            message_count    = data["count"],
+            first_message_at = data["first_ts"],
+            last_message_at  = data["last_ts"],
+        )
+    await conn.commit()
+    return total
+
+
+async def main() -> None:
+    """Сбор данных чата и наполнение БД.
+
+    Два шага:
+      1. get_chat_members() — все участники, включая молчунов.
+         joined_at пишется если известен; не перетирает существующее.
+      2. get_chat_history() — история сообщений → счётчики активности.
+
+    После выполнения в БД есть все участники чата, даже те кто ни разу
+    не писал — /check по ним вернёт досье с нулевой активностью.
+    """
+    from pyrogram import Client
 
     await init_db()
     conn = get_db()
@@ -143,47 +231,13 @@ async def main() -> None:
             api_hash=config.API_HASH,
             sleep_threshold=60,
         ) as app:
-            batch: list = []
-            total = 0
-
-            print("[parser] Подключено. Начинаем сбор истории...")
-
-            try:
-                async for msg in app.get_chat_history(config.CHAT_ID):
-                    batch.append(msg)
-                    total += 1
-                    if total % _PROGRESS_STEP == 0:
-                        print(f"[parser] Собрано: {total} сообщений...")
-                        await asyncio.sleep(_THROTTLE_SLEEP)
-
-            except FloodWait as e:
-                # FloodWait выше sleep_threshold: сохраняем то, что успели
-                logger.warning("[parser] FloodWait %d сек — сохраняем частичный результат.", e.value)
-                print(
-                    f"[parser] ⚠️  FloodWait {e.value} сек. "
-                    f"Сохраняем {total} сообщений и завершаем."
-                )
-
-            print(f"[parser] Сбор завершён: {total} сообщений. Агрегируем...")
-            stats = aggregate_messages(batch)
-            del batch  # освободить память до записи в БД
-
-            print(f"[parser] Записываем {len(stats)} пользователей в БД...")
-            for uid, data in stats.items():
-                await queries.save_parsed_stats(
-                    conn,
-                    user_id          = uid,
-                    username         = data["username"],
-                    message_count    = data["count"],
-                    first_message_at = data["first_ts"],
-                    last_message_at  = data["last_ts"],
-                )
-            await conn.commit()
+            members_count = await _collect_members(app, conn)
+            messages_count = await _collect_history(app, conn)
 
             print(
-                "[parser] ✅ Готово!\n"
-                f"[parser]    Пользователей: {len(stats)}\n"
-                f"[parser]    Сообщений учтено: {total}\n"
+                "\n[parser] ✅ Готово!\n"
+                f"[parser]    Участников в чате: {members_count}\n"
+                f"[parser]    Сообщений учтено: {messages_count}\n"
             )
 
     finally:
