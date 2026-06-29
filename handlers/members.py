@@ -72,7 +72,11 @@ async def on_member_join(event: ChatMemberUpdated, bot: Bot) -> None:
     user_line = f"@{username} (ID: {user_id})" if username else f"ID: {user_id}"
 
     if added_by is not None:
-        source = f"добавил ID: {added_by}"
+        adder = await queries.get_user(conn, added_by)
+        if adder and adder.get("username"):
+            source = f"добавил @{adder['username']}"
+        else:
+            source = f"добавил ID: {added_by}"
         logger.info(
             "Новый участник user_id=%d (@%s) добавлен пользователем %d",
             user_id, username, added_by,

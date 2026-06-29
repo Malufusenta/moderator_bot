@@ -233,6 +233,25 @@ async def test_join_sends_log_self_join_no_link(tmp_db, fake_bot_with_log):
     assert "самостоятельно" in msg
 
 
+async def test_join_added_by_shows_username(tmp_db, fake_bot_with_log):
+    """Если пригласивший есть в БД с username — показываем @ник, не ID."""
+    import time
+    await queries.upsert_user(tmp_db, 9001, "recruiter", int(time.time()))
+    event = _make_join_event(4005, "newguy", added_by_id=9001)
+    await on_member_join(event, fake_bot_with_log)
+    msg = fake_bot_with_log.log_sent[0]
+    assert "@recruiter" in msg
+    assert "9001" not in msg  # ID не должен торчать если есть ник
+
+
+async def test_join_added_by_falls_back_to_id(tmp_db, fake_bot_with_log):
+    """Если пригласившего нет в БД — показываем ID."""
+    event = _make_join_event(4006, "newguy2", added_by_id=9999)
+    await on_member_join(event, fake_bot_with_log)
+    msg = fake_bot_with_log.log_sent[0]
+    assert "9999" in msg
+
+
 async def test_join_no_log_when_log_chat_disabled(tmp_db, fake_bot):
     event = _make_join_event(4003, "ghost")
     await on_member_join(event, fake_bot)
