@@ -104,7 +104,10 @@ async def on_member_join(event: ChatMemberUpdated, bot: Bot) -> None:
     F.chat.id == config.CHAT_ID,
 )
 async def on_member_leave(event: ChatMemberUpdated, bot: Bot) -> None:
-    """Логировать выход участника в лог-чат."""
+    """Логировать выход участника и отправить его досье в лог-чат."""
+    import time
+    from handlers.admin import _format_dossier
+
     left_user = event.old_chat_member.user
     user_id   = left_user.id
     username  = left_user.username
@@ -113,3 +116,19 @@ async def on_member_leave(event: ChatMemberUpdated, bot: Bot) -> None:
     logger.info("Участник покинул чат user_id=%d (@%s)", user_id, username)
 
     await log_action(bot, f"🚪 Покинул чат\n👤 {user_line}")
+
+    # Автоматически отправляем досье вслед за уведомлением
+    conn    = get_db()
+    now_ts  = int(time.time())
+    cutoff  = now_ts - config.RECENCY_DAYS * 86_400
+    profile = await queries.get_user_profile(conn, user_id, cutoff)
+
+    if profile is None:
+        await log_action(bot, "📋 Досье: нет данных в базе (никогда не писал)")
+        return
+
+    added_by_user: dict | None = None
+    if profile.get("added_by") is not None:
+        added_by_user = await queries.get_user(conn, profile["added_by"])
+
+    await log_action(bot, _format_dossier(profile, now_ts, added_by_user))

@@ -271,28 +271,44 @@ def _make_leave_event(user_id: int, username: str | None) -> MagicMock:
     return event
 
 
-async def test_leave_sends_log_with_username(fake_bot_with_log):
+async def test_leave_sends_log_with_username(tmp_db, fake_bot_with_log):
     event = _make_leave_event(5001, "leaver")
     await on_member_leave(event, fake_bot_with_log)
-    assert len(fake_bot_with_log.log_sent) == 1
-    msg = fake_bot_with_log.log_sent[0]
-    assert "🚪 Покинул чат" in msg
-    assert "@leaver" in msg
-    assert "5001" in msg
+    assert fake_bot_with_log.log_sent[0].startswith("🚪 Покинул чат")
+    assert "@leaver" in fake_bot_with_log.log_sent[0]
+    assert "5001" in fake_bot_with_log.log_sent[0]
 
 
-async def test_leave_sends_log_without_username(fake_bot_with_log):
+async def test_leave_sends_log_without_username(tmp_db, fake_bot_with_log):
     event = _make_leave_event(5002, None)
     await on_member_leave(event, fake_bot_with_log)
-    assert len(fake_bot_with_log.log_sent) == 1
-    msg = fake_bot_with_log.log_sent[0]
-    assert "🚪 Покинул чат" in msg
-    assert "5002" in msg
+    assert "🚪 Покинул чат" in fake_bot_with_log.log_sent[0]
+    assert "5002" in fake_bot_with_log.log_sent[0]
 
 
-async def test_leave_no_log_when_log_chat_disabled(fake_bot):
+async def test_leave_sends_dossier_if_in_db(tmp_db, fake_bot_with_log):
+    """После уведомления о выходе бот отправляет досье если пользователь есть в БД."""
+    import time
+    await queries.upsert_user(tmp_db, 5004, "exmember", int(time.time()))
+    event = _make_leave_event(5004, "exmember")
+    await on_member_leave(event, fake_bot_with_log)
+    # Два сообщения: уведомление + досье
+    assert len(fake_bot_with_log.log_sent) == 2
+    assert "🚪 Покинул чат" in fake_bot_with_log.log_sent[0]
+    assert "👤 Пользователь:" in fake_bot_with_log.log_sent[1]
+
+
+async def test_leave_sends_no_data_if_not_in_db(tmp_db, fake_bot_with_log):
+    """Если пользователя нет в БД — отправляется сообщение «нет данных»."""
+    event = _make_leave_event(5005, "ghost")
+    await on_member_leave(event, fake_bot_with_log)
+    assert len(fake_bot_with_log.log_sent) == 2
+    assert "нет данных" in fake_bot_with_log.log_sent[1].lower()
+
+
+async def test_leave_no_log_when_log_chat_disabled(tmp_db, fake_bot):
     """LOG_CHAT_ID=0 → log_action молчит, ничего не отправляется."""
-    event = _make_leave_event(5003, "ghost")
+    event = _make_leave_event(5006, "ghost")
     await on_member_leave(event, fake_bot)
     assert fake_bot.sent == []
     assert fake_bot.log_sent == []
