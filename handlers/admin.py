@@ -42,6 +42,7 @@ from aiogram.types import Message
 import config
 from database import queries
 from database.db import get_db
+from services.pyrogram_client import get_pyrogram
 
 logger = logging.getLogger(__name__)
 
@@ -281,3 +282,75 @@ async def handle_forward(message: Message) -> None:
         return
 
     await _send_dossier(message, user_id)
+
+
+# ─── /history ────────────────────────────────────────────────────────────────
+
+_HISTORY_LIMIT = 20   # сообщений за один запрос
+
+
+@router.message(Command("history"))
+async def handle_history(message: Message) -> None:
+    """/history <user_id|@username> — последние сообщения пользователя в чате."""
+    if not message.from_user or not _is_admin(message.from_user.id):
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Использование:\n"
+            "  /history 123456789\n"
+            "  /history @username"
+        )
+        return
+
+    arg = parts[1].strip().lstrip("@")
+
+    if arg.isdigit():
+        user_id = int(arg)
+    else:
+        conn    = get_db()
+        user_id = await queries.find_user_id_by_username(conn, arg)
+        if user_id is None:
+            await message.answer(
+                "Пользователь не найден в базе.\n"
+                "⚠️ Поиск по username ненадёжен — используйте /history <user_id>."
+            )
+            return
+
+    pyro = get_pyrogram()
+    if pyro is None:
+        await message.answer("⚠️ Pyrogram-сессия не запущена — /history недоступен.")
+        return
+
+    wait_msg = await message.answer("🔍 Ищу сообщения...")
+
+    msgs = []
+    try:
+        async for msg in pyro.search_messages(
+            config.CHAT_ID, from_user=user_id, limit=_HISTORY_LIMIT
+        ):
+            msgs.append(msg)
+    except Exception as exc:
+        logger.warning("history: search_messages ошибка: %s", exc)
+        await wait_msg.delete()
+        await message.answer(f"⚠️ Ошибка при поиске: {exc}")
+        return
+
+    await wait_msg.delete()
+
+    if not msgs:
+        await message.answer("Сообщений не найдено.")
+        return
+
+    lines = [f"📝 Последние {len(msgs)} сообщений (из {_HISTORY_LIMIT} запрошенных):\n"]
+    for msg in msgs:
+        date_str = _fmt_ts(int(msg.date.timestamp()))
+        text = msg.text or msg.caption or "<i>[медиа без текста]</i>"
+        snippet = text[:200] + ("…" if len(text) > 200 else "")
+        lines.append(f"🕐 {date_str}\n{snippet}\n")
+
+    result = "\n".join(lines)
+    chunk_size = 4000
+    for i in range(0, len(result), chunk_size):
+        await message.answer(result[i : i + chunk_size])
