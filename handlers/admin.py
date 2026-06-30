@@ -196,7 +196,17 @@ async def _send_dossier(message: Message, user_id: int) -> None:
     if profile.get("added_by") is not None:
         added_by_user = await queries.get_user(conn, profile["added_by"])
 
-    await message.answer(_format_dossier(profile, now_ts, added_by_user))
+    msg_count = profile.get("message_count") or 0
+    keyboard = None
+    if msg_count > 0 and get_pyrogram() is not None:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=f"✉️ Сообщения ({msg_count})",
+                callback_data=f"hist_open:{user_id}",
+            )
+        ]])
+
+    await message.answer(_format_dossier(profile, now_ts, added_by_user), reply_markup=keyboard)
 
 
 # ─── Хендлеры ─────────────────────────────────────────────────────────────────
@@ -397,6 +407,33 @@ async def handle_history(message: Message) -> None:
         return
 
     await message.answer(
+        _format_history_page(msgs, offset=0, user_id=user_id),
+        reply_markup=_history_keyboard(user_id, offset=0, has_more=has_more),
+    )
+
+
+@router.callback_query(F.data.startswith("hist_open:"))
+async def handle_history_open(callback: CallbackQuery) -> None:
+    """Кнопка «Сообщения (N)» в досье — открывает историю новым сообщением."""
+    if not callback.from_user or not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+
+    user_id = int(callback.data.split(":")[1])
+    await callback.answer("🔍 Загружаю...")
+
+    try:
+        msgs, has_more = await _fetch_history(user_id, offset=0)
+    except Exception as exc:
+        logger.warning("hist_open callback: ошибка: %s", exc)
+        await callback.answer(f"Ошибка: {exc}", show_alert=True)
+        return
+
+    if not msgs:
+        await callback.answer("Сообщений не найдено.", show_alert=True)
+        return
+
+    await callback.message.answer(
         _format_history_page(msgs, offset=0, user_id=user_id),
         reply_markup=_history_keyboard(user_id, offset=0, has_more=has_more),
     )
