@@ -37,7 +37,7 @@ from datetime import datetime, timezone, timedelta
 
 from aiogram import F, Router
 from aiogram.filters import BaseFilter, Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 import config
 from database import queries
@@ -286,12 +286,77 @@ async def handle_forward(message: Message) -> None:
 
 # ─── /history ────────────────────────────────────────────────────────────────
 
-_HISTORY_LIMIT = 20   # сообщений за один запрос
+_HISTORY_PAGE = 10   # сообщений на страницу
+
+# Ссылка на сообщение в супергруппе: убираем префикс -100 из chat_id
+_LINK_CHAT_ID = str(config.CHAT_ID).replace("-100", "")
+
+
+def _msg_link(message_id: int) -> str:
+    return f"https://t.me/c/{_LINK_CHAT_ID}/{message_id}"
+
+
+def _history_keyboard(user_id: int, offset: int, has_more: bool) -> InlineKeyboardMarkup | None:
+    """Кнопки пагинации. None если страница единственная."""
+    buttons = []
+    if offset > 0:
+        buttons.append(InlineKeyboardButton(
+            text="← Назад",
+            callback_data=f"hist:{user_id}:{max(0, offset - _HISTORY_PAGE)}",
+        ))
+    if has_more:
+        buttons.append(InlineKeyboardButton(
+            text="Ещё →",
+            callback_data=f"hist:{user_id}:{offset + _HISTORY_PAGE}",
+        ))
+    if not buttons:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
+def _format_history_page(msgs: list, offset: int, user_id: int) -> str:
+    """Форматировать страницу истории."""
+    lines = [f"📝 Сообщения пользователя <code>{user_id}</code> "
+             f"(#{offset + 1}–{offset + len(msgs)}):\n"]
+    for msg in msgs:
+        date_str = _fmt_ts(int(msg.date.timestamp()))
+        text = msg.text or msg.caption or ""
+        link = _msg_link(msg.id)
+        if text:
+            snippet = text[:150] + ("…" if len(text) > 150 else "")
+            lines.append(f'🕐 <a href="{link}">{date_str}</a>\n{snippet}\n')
+        else:
+            lines.append(f'🕐 <a href="{link}">{date_str}</a> — <i>[медиа]</i>\n')
+    return "\n".join(lines)
+
+
+async def _fetch_history(user_id: int, offset: int) -> tuple[list, bool]:
+    """Получить страницу + флаг есть ли ещё."""
+    pyro = get_pyrogram()
+    if pyro is None:
+        return [], False
+    msgs = []
+    # Берём на 1 больше чтобы понять есть ли следующая страница
+    async for msg in pyro.search_messages(
+        config.CHAT_ID, from_user=user_id,
+        limit=_HISTORY_PAGE + 1, offset=offset,
+    ):
+        msgs.append(msg)
+    has_more = len(msgs) > _HISTORY_PAGE
+    return msgs[:_HISTORY_PAGE], has_more
+
+
+async def _resolve_user_id(arg: str) -> int | None:
+    """Преобразовать аргумент команды в user_id."""
+    if arg.isdigit():
+        return int(arg)
+    conn = get_db()
+    return await queries.find_user_id_by_username(conn, arg)
 
 
 @router.message(Command("history"))
 async def handle_history(message: Message) -> None:
-    """/history <user_id|@username> — последние сообщения пользователя в чате."""
+    """/history <user_id|@username> — сообщения пользователя в чате с пагинацией."""
     if not message.from_user or not _is_admin(message.from_user.id):
         return
 
@@ -304,35 +369,23 @@ async def handle_history(message: Message) -> None:
         )
         return
 
-    arg = parts[1].strip().lstrip("@")
-
-    if arg.isdigit():
-        user_id = int(arg)
-    else:
-        conn    = get_db()
-        user_id = await queries.find_user_id_by_username(conn, arg)
-        if user_id is None:
-            await message.answer(
-                "Пользователь не найден в базе.\n"
-                "⚠️ Поиск по username ненадёжен — используйте /history <user_id>."
-            )
-            return
-
-    pyro = get_pyrogram()
-    if pyro is None:
+    if get_pyrogram() is None:
         await message.answer("⚠️ Pyrogram-сессия не запущена — /history недоступен.")
         return
 
-    wait_msg = await message.answer("🔍 Ищу сообщения...")
+    user_id = await _resolve_user_id(parts[1].strip().lstrip("@"))
+    if user_id is None:
+        await message.answer(
+            "Пользователь не найден в базе.\n"
+            "⚠️ Поиск по username ненадёжен — используйте /history <user_id>."
+        )
+        return
 
-    msgs = []
+    wait_msg = await message.answer("🔍 Ищу сообщения...")
     try:
-        async for msg in pyro.search_messages(
-            config.CHAT_ID, from_user=user_id, limit=_HISTORY_LIMIT
-        ):
-            msgs.append(msg)
+        msgs, has_more = await _fetch_history(user_id, offset=0)
     except Exception as exc:
-        logger.warning("history: search_messages ошибка: %s", exc)
+        logger.warning("history: ошибка поиска: %s", exc)
         await wait_msg.delete()
         await message.answer(f"⚠️ Ошибка при поиске: {exc}")
         return
@@ -343,14 +396,36 @@ async def handle_history(message: Message) -> None:
         await message.answer("Сообщений не найдено.")
         return
 
-    lines = [f"📝 Последние {len(msgs)} сообщений (из {_HISTORY_LIMIT} запрошенных):\n"]
-    for msg in msgs:
-        date_str = _fmt_ts(int(msg.date.timestamp()))
-        text = msg.text or msg.caption or "<i>[медиа без текста]</i>"
-        snippet = text[:200] + ("…" if len(text) > 200 else "")
-        lines.append(f"🕐 {date_str}\n{snippet}\n")
+    await message.answer(
+        _format_history_page(msgs, offset=0, user_id=user_id),
+        reply_markup=_history_keyboard(user_id, offset=0, has_more=has_more),
+    )
 
-    result = "\n".join(lines)
-    chunk_size = 4000
-    for i in range(0, len(result), chunk_size):
-        await message.answer(result[i : i + chunk_size])
+
+@router.callback_query(F.data.startswith("hist:"))
+async def handle_history_page(callback: CallbackQuery) -> None:
+    """Пагинация истории через инлайн-кнопки."""
+    if not callback.from_user or not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+
+    _, uid_str, offset_str = callback.data.split(":")
+    user_id = int(uid_str)
+    offset  = int(offset_str)
+
+    await callback.answer("🔍 Загружаю...")
+    try:
+        msgs, has_more = await _fetch_history(user_id, offset=offset)
+    except Exception as exc:
+        logger.warning("history callback: ошибка: %s", exc)
+        await callback.answer(f"Ошибка: {exc}", show_alert=True)
+        return
+
+    if not msgs:
+        await callback.answer("Больше сообщений нет.", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        _format_history_page(msgs, offset=offset, user_id=user_id),
+        reply_markup=_history_keyboard(user_id, offset=offset, has_more=has_more),
+    )
