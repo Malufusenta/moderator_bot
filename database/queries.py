@@ -384,3 +384,39 @@ async def save_parsed_stats(
         """,
         (user_id, username, message_count, first_message_at, last_message_at),
     )
+
+
+# ─── история входов/выходов ───────────────────────────────────────────────────
+
+async def record_member_event(
+    conn: aiosqlite.Connection,
+    user_id: int,
+    event_type: str,   # 'join' | 'leave'
+    happened_at: int,
+) -> None:
+    """Записать событие входа или выхода участника."""
+    await conn.execute(
+        "INSERT INTO member_events (user_id, event_type, happened_at) VALUES (?, ?, ?)",
+        (user_id, event_type, happened_at),
+    )
+    await conn.commit()
+
+
+async def get_member_events(
+    conn: aiosqlite.Connection,
+    user_id: int,
+    limit: int = 50,
+) -> list[dict]:
+    """Получить историю входов/выходов пользователя (новые сначала)."""
+    cursor = await conn.execute(
+        """
+        SELECT event_type, happened_at
+        FROM member_events
+        WHERE user_id = ?
+        ORDER BY happened_at DESC
+        LIMIT ?
+        """,
+        (user_id, limit),
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]

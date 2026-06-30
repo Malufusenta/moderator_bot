@@ -58,6 +58,20 @@ CREATE INDEX IF NOT EXISTS idx_advertisements_user
     ON advertisements (user_id);
 """
 
+CREATE_MEMBER_EVENTS = """
+CREATE TABLE IF NOT EXISTS member_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    event_type  TEXT    NOT NULL,   -- 'join' | 'leave'
+    happened_at INTEGER NOT NULL    -- UTC unix-ts
+);
+"""
+
+CREATE_MEMBER_EVENTS_IDX = """
+CREATE INDEX IF NOT EXISTS idx_member_events_user
+    ON member_events (user_id, happened_at DESC);
+"""
+
 # Удобный кортеж: передавать в db.py при инициализации
 ALL_DDL: tuple[str, ...] = (
     CREATE_USERS,
@@ -65,4 +79,6 @@ ALL_DDL: tuple[str, ...] = (
     CREATE_MESSAGES_IDX,
     CREATE_ADVERTISEMENTS,
     CREATE_ADVERTISEMENTS_IDX,
+    CREATE_MEMBER_EVENTS,
+    CREATE_MEMBER_EVENTS_IDX,
 )

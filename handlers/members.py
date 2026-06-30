@@ -68,6 +68,7 @@ async def on_member_join(event: ChatMemberUpdated, bot: Bot) -> None:
         invite_link=invite_link,
         added_by=added_by,
     )
+    await queries.record_member_event(conn, user_id, "join", joined_at)
 
     user_line = f"@{username} (<code>{user_id}</code>)" if username else f"<code>{user_id}</code>"
 
@@ -122,9 +123,13 @@ async def on_member_leave(event: ChatMemberUpdated, bot: Bot) -> None:
     import time
     from handlers.admin import _format_dossier
 
-    left_user = event.old_chat_member.user
-    user_id   = left_user.id
-    username  = left_user.username
+    left_user  = event.old_chat_member.user
+    user_id    = left_user.id
+    username   = left_user.username
+    left_at    = int(event.date.replace(tzinfo=timezone.utc).timestamp())
+
+    conn = get_db()
+    await queries.record_member_event(conn, user_id, "leave", left_at)
 
     user_line = f"@{username} (ID: {user_id})" if username else f"ID: {user_id}"
     logger.info("Участник покинул чат user_id=%d (@%s)", user_id, username)

@@ -197,14 +197,17 @@ async def _send_dossier(message: Message, user_id: int) -> None:
         added_by_user = await queries.get_user(conn, profile["added_by"])
 
     msg_count = profile.get("message_count") or 0
-    keyboard = None
+    buttons = []
     if msg_count > 0 and get_pyrogram() is not None:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text=f"✉️ Сообщения ({msg_count})",
-                callback_data=f"hist_open:{user_id}",
-            )
-        ]])
+        buttons.append(InlineKeyboardButton(
+            text=f"✉️ Сообщения ({msg_count})",
+            callback_data=f"hist_open:{user_id}",
+        ))
+    buttons.append(InlineKeyboardButton(
+        text="📅 Входы / выходы",
+        callback_data=f"events:{user_id}",
+    ))
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
 
     await message.answer(_format_dossier(profile, now_ts, added_by_user), reply_markup=keyboard)
 
@@ -466,3 +469,31 @@ async def handle_history_page(callback: CallbackQuery) -> None:
         _format_history_page(msgs, offset=offset, user_id=user_id),
         reply_markup=_history_keyboard(user_id, offset=offset, has_more=has_more),
     )
+
+
+@router.callback_query(F.data.startswith("events:"))
+async def handle_member_events(callback: CallbackQuery) -> None:
+    """Кнопка «Входы / выходы» в досье — показывает историю событий."""
+    if not callback.from_user or not _is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+
+    user_id = int(callback.data.split(":")[1])
+    conn    = get_db()
+    events  = await queries.get_member_events(conn, user_id)
+
+    await callback.answer()
+
+    if not events:
+        await callback.message.answer(
+            f"📅 История входов/выходов <code>{user_id}</code>:\n\nСобытий пока нет (бот начал следить недавно)."
+        )
+        return
+
+    lines = [f"📅 История входов/выходов <code>{user_id}</code>:\n"]
+    for ev in events:
+        icon = "👋" if ev["event_type"] == "join" else "🚪"
+        label = "Вступил" if ev["event_type"] == "join" else "Покинул"
+        lines.append(f"{icon} {label} — {_fmt_ts(ev['happened_at'])}")
+
+    await callback.message.answer("\n".join(lines))
