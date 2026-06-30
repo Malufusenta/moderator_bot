@@ -69,14 +69,14 @@ async def on_member_join(event: ChatMemberUpdated, bot: Bot) -> None:
         added_by=added_by,
     )
 
-    user_line = f"@{username} (ID: {user_id})" if username else f"ID: {user_id}"
+    user_line = f"@{username} (<code>{user_id}</code>)" if username else f"<code>{user_id}</code>"
 
     if added_by is not None:
         adder = await queries.get_user(conn, added_by)
         if adder and adder.get("username"):
             source = f"добавил @{adder['username']}"
         else:
-            source = f"добавил ID: {added_by}"
+            source = f"добавил <code>{added_by}</code>"
         logger.info(
             "Новый участник user_id=%d (@%s) добавлен пользователем %d",
             user_id, username, added_by,
@@ -96,7 +96,21 @@ async def on_member_join(event: ChatMemberUpdated, bot: Bot) -> None:
             user_id, username,
         )
 
-    await log_action(bot, f"👋 Вступил в чат\n👤 {user_line}\n🔗 {source}")
+    # Проверяем был ли раньше в чате
+    import time as _time
+    existing = await queries.get_user(conn, user_id)
+    if existing and (existing.get("message_count") or existing.get("joined_at")):
+        from handlers.admin import _fmt_ts
+        prev_msgs = existing.get("message_count") or 0
+        last_seen = existing.get("last_message_at")
+        history_line = (
+            f"\n🔄 Ранее был в чате · {prev_msgs} сообщ."
+            + (f" · последнее {_fmt_ts(last_seen)}" if last_seen else "")
+        )
+    else:
+        history_line = ""
+
+    await log_action(bot, f"👋 Вступил в чат\n👤 {user_line}\n🔗 {source}{history_line}")
 
 
 @router.chat_member(
